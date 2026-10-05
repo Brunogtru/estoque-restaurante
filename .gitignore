@@ -1,0 +1,18 @@
+# Banco de dados local (dados de teste / ambiente local)
+*.db
+*.sqlite3
+
+# Python bytecode e caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# IDEs e editores
+.vscode/
+.idea/
+*.swp
