@@ -37,9 +37,10 @@ class Base(DeclarativeBase):
 
 
 # --- Session factory ---------------------------------------------------------
-# sessionmaker cria uma "fábrica". Cada vez que chamamos Session(), ganhamos
+# sessionmaker cria uma "fábrica". Cada vez que chamamos SessionLocal(), ganhamos
 # uma sessão nova e limpa para conversar com o banco.
-Session = sessionmaker(bind=engine)
+SessionLocal = sessionmaker(bind=engine)
+
 
 
 # --- Criação das tabelas -----------------------------------------------------

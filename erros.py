@@ -33,3 +33,31 @@ class QuantidadeInvalidaError(EstoqueError):
 class EstoqueInsuficienteError(EstoqueError):
     """A saída deixaria o saldo do item negativo."""
     pass
+
+
+class NomeInvalidoError(EstoqueError):
+    """Nome do item vazio ou inválido."""
+    pass
+
+
+class UnidadeInvalidaError(EstoqueError):
+    """Unidade de medida fora das permitidas (g, ml, un)."""
+    pass
+
+
+class EstoqueMinimoInvalidoError(EstoqueError):
+    """Estoque mínimo informado é negativo."""
+    pass
+
+
+class MotivoIncompativelError(EstoqueError):
+    """O motivo informado não é permitido para o tipo de movimentação (ex: ENTRADA com USO)."""
+    pass
+
+
+class AlteracaoUnidadeProibidaError(EstoqueError):
+    """Tentativa de alterar a unidade de medida de um item que já possui histórico de movimentações."""
+    pass
+
+
+
