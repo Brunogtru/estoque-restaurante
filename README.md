@@ -22,7 +22,7 @@ Sistema local em Python para controle rigoroso de estoque, projetado com **arqui
    - `ENTRADA` aceita exclusivamente `COMPRA`.
    - `SAIDA` aceita exclusivamente `USO`, `PERDA` ou `VENCIMENTO`.
 5. **Imutabilidade das movimentações**: Registros de estoque nunca são editados ou apagados, servindo de trilha de auditoria contábil.
-6. **Soft Delete**: Itens nunca são excluídos fisicamente do banco; são marcados com `ativo = False`, mantendo a integridade referencial do histórico.
+6. **Soft Delete**: Itens e usuários nunca são excluídos fisicamente; são marcados com `ativo = False`, mantendo a integridade referencial do histórico.
 7. **Regras de Edição de Itens**:
    - Itens inativos não podem ser editados (devem ser reativados primeiro).
    - A unidade de medida só pode ser alterada se o item ainda **não possuir** nenhuma movimentação registrada.
@@ -34,6 +34,7 @@ Sistema local em Python para controle rigoroso de estoque, projetado com **arqui
    - `api/rotas/`: Apenas traduzem requisições HTTP, chamam o `services.py` e devolvem JSON.
    - `api/app.py`: Tratador de erros central que converte exceções de domínio em status HTTP semânticos (404, 409, 422).
 10. **Foreign Keys ativas no SQLite**: Hook via SQLAlchemy event listener executando `PRAGMA foreign_keys = ON` em cada conexão.
+11. **Usuários e auditoria**: Usuários têm `id`, `nome`, `login` único, `senha_hash`, `papel`, `ativo` e `criado_em`. Senhas são armazenadas com Argon2, nunca em texto puro. Cada movimentação referencia obrigatoriamente o usuário responsável; o extrato retorna seu nome.
 
 ---
 
@@ -52,8 +53,8 @@ estoque-restaurante/
 │       ├── movimentacoes.py # Endpoints de /movimentacoes (registro de entrada/saída)
 │       └── usuarios.py      # Endpoints de /usuarios (abertos provisoriamente)
 ├── db.py                    # Engine, SessionLocal e ativação de FKs do SQLite
-├── models.py                # Modelos ORM (Item, Movimentacao, Enums)
-├── services.py              # Lógica de negócio pura (saldo, validações, consultas)
+├── models.py                # Modelos ORM (Item, Usuario, Movimentacao e Enums)
+├── services.py              # Regras de negócio, validações, usuários e consultas de saldo
 ├── legacy/
 │   └── terminal.py          # CLI arquivada, não mantida nem usada pelo fluxo principal
 ├── scripts/
@@ -97,9 +98,9 @@ Na raiz do projeto, execute pelo ambiente virtual:
 .venv\Scripts\python.exe -m scripts.criar_admin
 ```
 
-O módulo é executado a partir da raiz, permitindo ao Python importar `db.py`, `models.py` e `services.py`. O script oculta a senha e pede confirmação. Ele recusa continuar se já houver um administrador ativo; para cadastrar outros usuários, use `POST /usuarios` em `/docs` (rota aberta provisoriamente até a Etapa 3).
+O módulo é executado a partir da raiz, permitindo ao Python importar `db.py`, `models.py` e `services.py`. O script cria as tabelas antes do cadastro, oculta a senha e pede confirmação. Ele recusa continuar se já houver um administrador ativo; para cadastrar outros usuários, use `POST /usuarios` em `/docs` (rota aberta provisoriamente até a Etapa 3).
 
-> **Atenção: usuários sem autenticação.** As rotas `/usuarios` estão abertas provisoriamente porque o login ainda não foi implementado. Elas serão protegidas na Etapa 3; até lá, não exponha a API a redes ou usuários não confiáveis.
+> **Atenção: API sem autenticação nesta etapa.** As rotas `/usuarios` estão abertas provisoriamente; ainda não há login nem permissões nas rotas da API. A proteção será implementada na Etapa 3. Use apenas localmente e não exponha a API a redes ou usuários não confiáveis.
 
 ---
 
@@ -137,6 +138,36 @@ Estas rotas estão abertas **provisoriamente** até a implementação de login e
 | `PATCH` | `/usuarios/{usuario_id}/papel` | Altera papel | `200 OK` |
 | `PATCH` | `/usuarios/{usuario_id}/desativar` | Desativa usuário | `200 OK` |
 | `PATCH` | `/usuarios/{usuario_id}/reativar` | Reativa usuário | `200 OK` |
+
+### Roteiro de verificação manual da Etapa 2
+
+Faça esta verificação localmente pelo Swagger em `/docs`. As rotas estão sem autenticação nesta etapa. Em todas as respostas de usuário, confirme que `senha_hash` não aparece.
+
+1. **Criar o primeiro administrador:** na raiz do projeto, rode `& "$PWD\.venv\Scripts\python.exe" -m scripts.criar_admin` no PowerShell. Informe nome e login; digite a senha duas vezes nos prompts ocultos. O script cria as tabelas se necessário e informa o ID criado.
+2. **Subir a API:** rode `& "$PWD\.venv\Scripts\python.exe" main.py` e abra `http://127.0.0.1:8000/docs`.
+3. **Criar usuários dos três papéis:** o administrador inicial já cobre `ADMINISTRADOR`. Use `POST /usuarios` para criar um `ESTOQUISTA`, um `COZINHA` e um segundo `ADMINISTRADOR` (necessário para a etapa de teste do último administrador). Cada cadastro válido retorna **201**. Anote os IDs. Os corpos seguem este formato:
+
+    ```json
+    {
+       "nome": "Bruno Estoquista",
+       "login": "estoquista",
+       "senha": "senha-segura-123",
+       "papel": "ESTOQUISTA"
+    }
+    ```
+
+    Para os outros dois, altere `nome`, `login` e `papel` para `COZINHA` e `ADMINISTRADOR`.
+4. **Login duplicado:** repita `POST /usuarios` com login já cadastrado, inclusive variando maiúsculas ou espaços externos. Esperado: **409 Conflict**, `erro: "LoginDuplicadoError"`.
+5. **Senha curta:** envie `POST /usuarios` com uma senha como `"abc"`. Esperado: **422 Unprocessable Entity**, rejeitada pelo schema Pydantic antes de chegar ao serviço.
+6. **Usuário inexistente:** chame `GET /usuarios/999999` (use um ID que não exista). Esperado: **404 Not Found**, `erro: "UsuarioNaoEncontradoError"`.
+7. **Criar item para movimentar:** use `POST /itens` com `{"nome":"Arroz de teste","unidade":"g","estoque_minimo":0}`. Esperado: **201**; anote o `id` retornado.
+8. **Movimentação válida:** use `POST /movimentacoes` com o ID do item, o ID de um usuário ativo e `tipo: "ENTRADA"`, `quantidade: 1000`, `motivo: "COMPRA"`. Esperado: **201** e resposta com `usuario_nome` igual ao nome do responsável.
+9. **Movimentação com usuário inexistente:** repita a entrada com `usuario_id: 999999`. Esperado: **404 Not Found**, `UsuarioNaoEncontradoError`; nenhuma movimentação deve ser gravada.
+10. **Movimentação com usuário inativo:** chame `PATCH /usuarios/{id_cozinha}/desativar` (esperado **200**) e tente registrar uma entrada com esse `usuario_id`. Esperado: **409 Conflict**, `UsuarioInativoError`; nenhuma movimentação deve ser gravada.
+11. **Extrato com responsável:** chame `GET /itens/{id_item}/extrato`. Esperado: **200**; cada movimentação inclui `usuario_nome` e não contém `senha_hash`.
+12. **Último administrador:** há dois administradores ativos: o inicial e o segundo criado no passo 3. Desative o segundo com `PATCH /usuarios/{id_admin_2}/desativar`; esperado: **200**. Depois tente desativar o administrador inicial com `PATCH /usuarios/{id_admin_inicial}/desativar`; esperado: **409 Conflict**, `UltimoAdministradorError`. O primeiro deve continuar ativo.
+
+`usuario_id` no corpo de `POST /movimentacoes` é provisório e fornecido pelo cliente apenas para esta etapa. Na Etapa 3, o campo será removido e o responsável virá da sessão autenticada. O teste de senha curta retorna o formato de validação padrão do FastAPI; erros de domínio usam o formato `{ "erro": "...", "mensagem": "..." }`.
 
 ---
 
