@@ -117,6 +117,19 @@ def listar_usuarios(session: Session, apenas_ativos: bool = True) -> list[Usuari
     return query.order_by(Usuario.nome).all()
 
 
+def existe_administrador_ativo(session: Session) -> bool:
+    """Indica se há ao menos um administrador atualmente ativo."""
+    return (
+        session.query(Usuario.id)
+        .filter(
+            Usuario.ativo.is_(True),
+            Usuario.papel == PapelUsuario.ADMINISTRADOR,
+        )
+        .first()
+        is not None
+    )
+
+
 def buscar_usuario_por_id(session: Session, usuario_id: int) -> Usuario:
     """Busca usuário pelo ID ou lança UsuarioNaoEncontradoError."""
     usuario = session.get(Usuario, usuario_id)

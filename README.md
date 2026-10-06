@@ -56,6 +56,9 @@ estoque-restaurante/
 ├── services.py              # Lógica de negócio pura (saldo, validações, consultas)
 ├── legacy/
 │   └── terminal.py          # CLI arquivada, não mantida nem usada pelo fluxo principal
+├── scripts/
+│   ├── __init__.py           # Pacote de scripts operacionais
+│   └── criar_admin.py        # Cria o primeiro administrador com senha oculta
 ├── erros.py                 # Exceções customizadas de domínio (herdeiras de EstoqueError)
 ├── main.py                  # Ponto de entrada da API
 ├── requirements.txt         # Dependências do projeto
@@ -85,6 +88,16 @@ Acesse a **documentação interativa automática (Swagger UI)** no navegador:
 👉 **[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)**
 
 > **Terminal arquivado:** `legacy/terminal.py` é mantido apenas como referência histórica. Não faz parte do fluxo principal e não é mais mantido.
+
+### Criar o primeiro administrador
+
+Na raiz do projeto, execute pelo ambiente virtual:
+
+```powershell
+.venv\Scripts\python.exe -m scripts.criar_admin
+```
+
+O módulo é executado a partir da raiz, permitindo ao Python importar `db.py`, `models.py` e `services.py`. O script oculta a senha e pede confirmação. Ele recusa continuar se já houver um administrador ativo; para cadastrar outros usuários, use `POST /usuarios` em `/docs` (rota aberta provisoriamente até a Etapa 3).
 
 > **Atenção: usuários sem autenticação.** As rotas `/usuarios` estão abertas provisoriamente porque o login ainda não foi implementado. Elas serão protegidas na Etapa 3; até lá, não exponha a API a redes ou usuários não confiáveis.
 
