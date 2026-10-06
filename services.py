@@ -8,7 +8,7 @@ Nunca faz print() nem input() — apenas retorna dados ou lança exceções de e
 # pyrefly: ignore [missing-import]
 from sqlalchemy import case, func
 # pyrefly: ignore [missing-import]
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from argon2 import PasswordHasher
 
 from erros import (
@@ -469,6 +469,7 @@ def calcular_saldo(session: Session, item_id: int) -> int:
 def registrar_movimentacao(
     session: Session,
     item_id: int,
+    usuario_id: int,
     tipo: TipoMovimentacao,
     quantidade: int,
     motivo: MotivoMovimentacao,
@@ -479,8 +480,8 @@ def registrar_movimentacao(
     Ordem das validações:
     1. Quantidade deve ser > 0
     2. Motivo deve ser compatível com o tipo (ENTRADA só COMPRA; SAIDA só USO/PERDA/VENCIMENTO)
-    3. Item deve existir no banco
-    4. Item deve estar ativo
+    3. Item deve existir e estar ativo
+    4. Usuário deve existir e estar ativo
     5. Se for SAIDA, saldo não pode ficar negativo
 
     Se qualquer validação falhar, lança exceção e nada é gravado.
@@ -488,6 +489,7 @@ def registrar_movimentacao(
     Args:
         session: sessão do banco.
         item_id: id do item.
+        usuario_id: id do usuário responsável pela movimentação.
         tipo: TipoMovimentacao.ENTRADA ou TipoMovimentacao.SAIDA.
         quantidade: valor positivo na menor unidade.
         motivo: MotivoMovimentacao (COMPRA, USO, PERDA, VENCIMENTO).
@@ -500,6 +502,8 @@ def registrar_movimentacao(
         MotivoIncompativelError: se motivo não é permitido para o tipo.
         ItemNaoEncontradoError: se item_id não existe.
         ItemInativoError: se item está desativado.
+        UsuarioNaoEncontradoError: se usuario_id não existe.
+        UsuarioInativoError: se o usuário está desativado.
         EstoqueInsuficienteError: se saída deixaria saldo negativo.
     """
     # 1. Quantidade positiva
@@ -517,16 +521,21 @@ def registrar_movimentacao(
             f"Motivos permitidos: {permitidos_str}."
         )
 
-    # 3. Item existe? (buscar_item_por_id já lança ItemNaoEncontradoError se não)
+    # 3. Item existe e está ativo?
     item = buscar_item_por_id(session, item_id)
-
-    # 3. Item ativo?
     if not item.ativo:
         raise ItemInativoError(
             f"Item '{item.nome}' (id={item.id}) esta inativo."
         )
 
-    # 4. Se for saída, verificar saldo
+    # 4. Usuário existe e está ativo?
+    usuario = buscar_usuario_por_id(session, usuario_id)
+    if not usuario.ativo:
+        raise UsuarioInativoError(
+            f"Usuario '{usuario.login}' (id={usuario.id}) esta inativo."
+        )
+
+    # 5. Se for saída, verificar saldo
     if tipo == TipoMovimentacao.SAIDA:
         saldo_atual = calcular_saldo(session, item_id)
         if saldo_atual < quantidade:
@@ -539,6 +548,7 @@ def registrar_movimentacao(
     # Tudo validado — cria e grava a movimentação
     mov = Movimentacao(
         item_id=item_id,
+        usuario_id=usuario.id,
         tipo=tipo,
         quantidade=quantidade,
         motivo=motivo,
@@ -559,13 +569,14 @@ def listar_movimentacoes(session: Session, item_id: int) -> list[Movimentacao]:
         item_id: id do item.
 
     Returns:
-        Lista de objetos Movimentacao.
+        Lista de objetos Movimentacao com o usuário responsável carregado em mov.usuario.
     """
     # Garante que o item existe antes de puxar histórico
     buscar_item_por_id(session, item_id)
 
     return (
         session.query(Movimentacao)
+        .options(joinedload(Movimentacao.usuario))
         .filter(Movimentacao.item_id == item_id)
         .order_by(Movimentacao.criado_em.asc())
         .all()
