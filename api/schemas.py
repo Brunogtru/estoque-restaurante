@@ -7,7 +7,34 @@ das respostas, sem expor os models do SQLAlchemy diretamente.
 
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
-from models import TipoMovimentacao, MotivoMovimentacao
+from models import TipoMovimentacao, MotivoMovimentacao, PapelUsuario
+
+
+# --- Schemas de Usuário ------------------------------------------------------
+
+class UsuarioCriar(BaseModel):
+    """Dados recebidos para cadastrar usuário; senha nunca é devolvida."""
+    nome: str = Field(..., description="Nome do usuário")
+    login: str = Field(..., description="Login (normalizado pela camada de serviço)")
+    senha: str = Field(..., min_length=8, max_length=128, description="Senha de 8 a 128 caracteres")
+    papel: PapelUsuario = Field(..., description="ADMINISTRADOR, ESTOQUISTA ou COZINHA")
+
+
+class UsuarioMudarPapel(BaseModel):
+    """Novo papel do usuário."""
+    papel: PapelUsuario
+
+
+class UsuarioResposta(BaseModel):
+    """Campos públicos do usuário; senha_hash é deliberadamente omitido."""
+    id: int
+    nome: str
+    login: str
+    papel: PapelUsuario
+    ativo: bool
+    criado_em: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Schemas de Item ---------------------------------------------------------

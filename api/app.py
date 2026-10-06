@@ -21,6 +21,7 @@ from erros import (
 )
 from api.rotas.itens import router as router_itens
 from api.rotas.movimentacoes import router as router_movimentacoes
+from api.rotas.usuarios import router as router_usuarios
 
 
 # --- Ciclo de vida da aplicação ----------------------------------------------
@@ -78,3 +79,4 @@ async def estoquista_exception_handler(request: Request, exc: EstoqueError):
 # --- Registro de Rotas -------------------------------------------------------
 app.include_router(router_itens)
 app.include_router(router_movimentacoes)
+app.include_router(router_usuarios)

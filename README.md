@@ -49,14 +49,15 @@ estoque-restaurante/
 │   └── rotas/
 │       ├── __init__.py      # Pacote de rotas
 │       ├── itens.py         # Endpoints de /itens (CRUD, alerta e extrato)
-│       └── movimentacoes.py # Endpoints de /movimentacoes (registro de entrada/saída)
+│       ├── movimentacoes.py # Endpoints de /movimentacoes (registro de entrada/saída)
+│       └── usuarios.py      # Endpoints de /usuarios (abertos provisoriamente)
 ├── db.py                    # Engine, SessionLocal e ativação de FKs do SQLite
 ├── models.py                # Modelos ORM (Item, Movimentacao, Enums)
 ├── services.py              # Lógica de negócio pura (saldo, validações, consultas)
 ├── legacy/
 │   └── terminal.py          # CLI arquivada, não mantida nem usada pelo fluxo principal
 ├── erros.py                 # Exceções customizadas de domínio (herdeiras de EstoqueError)
-├── main.py                  # Ponto de entrada unificado (inicia CLI ou API)
+├── main.py                  # Ponto de entrada da API
 ├── requirements.txt         # Dependências do projeto
 ├── .gitignore               # Arquivos ignorados pelo Git (banco local, caches, etc.)
 └── estoque.db               # Banco de dados local SQLite (gerado na execução)
@@ -85,6 +86,8 @@ Acesse a **documentação interativa automática (Swagger UI)** no navegador:
 
 > **Terminal arquivado:** `legacy/terminal.py` é mantido apenas como referência histórica. Não faz parte do fluxo principal e não é mais mantido.
 
+> **Atenção: usuários sem autenticação.** As rotas `/usuarios` estão abertas provisoriamente porque o login ainda não foi implementado. Elas serão protegidas na Etapa 3; até lá, não exponha a API a redes ou usuários não confiáveis.
+
 ---
 
 ## 📡 Endpoints da API REST
@@ -107,6 +110,19 @@ Acesse a **documentação interativa automática (Swagger UI)** no navegador:
 |---|---|---|---|
 | `POST` | `/movimentacoes` | Registra entrada ou saída validando saldo e compatibilidade | `201 Created` |
 
+### Usuários (`/usuarios`)
+
+Estas rotas estão abertas **provisoriamente** até a implementação de login e permissões na Etapa 3.
+
+| Método | Rota | Descrição | Status Sucesso |
+|---|---|---|---|
+| `POST` | `/usuarios` | Cadastra usuário; a resposta não inclui `senha_hash` | `201 Created` |
+| `GET` | `/usuarios` | Lista usuários (`?apenas_ativos=false` inclui inativos) | `200 OK` |
+| `GET` | `/usuarios/{usuario_id}` | Busca usuário por ID | `200 OK` |
+| `PATCH` | `/usuarios/{usuario_id}/papel` | Altera papel | `200 OK` |
+| `PATCH` | `/usuarios/{usuario_id}/desativar` | Desativa usuário | `200 OK` |
+| `PATCH` | `/usuarios/{usuario_id}/reativar` | Reativa usuário | `200 OK` |
+
 ---
 
 ## 🛑 Tratamento de Erros Semântico (HTTP)
@@ -126,3 +142,5 @@ As exceções de domínio disparadas pelo `services.py` são interceptadas e con
   "mensagem": "Saldo insuficiente para 'Farinha de Trigo'. Disponivel: 3000g, solicitado: 5000g."
 }
 ```
+
+**Mapeamento provisório:** o mapeamento HTTP específico das novas exceções de usuário será feito na Parte F. Até lá, exceções de domínio ainda não registradas no tratador central recebem o status genérico `400 Bad Request`; erros de validação estrutural dos schemas Pydantic continuam sendo tratados pelo FastAPI como `422 Unprocessable Entity`.
