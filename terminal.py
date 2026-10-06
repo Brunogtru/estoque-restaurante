@@ -10,11 +10,13 @@ Responsabilidades:
 Regra: NUNCA tem logica de negocio aqui. So traduz entre humano e servico.
 """
 
-from db import Session
+from db import SessionLocal
 from erros import EstoqueError
 from services import (
     cadastrar_item,
+    editar_item,
     listar_itens,
+    listar_itens_abaixo_do_minimo,
     buscar_item_por_id,
     desativar_item,
     reativar_item,
@@ -52,41 +54,38 @@ def _pausar():
 # =============================================================================
 
 def _tela_cadastrar_item():
-    """Coleta dados e cadastra um novo item."""
+    """Coleta dados e repassa para o service cadastrar um novo item."""
     print("\n--- Cadastrar Novo Item ---")
 
-    nome = input("Nome do item: ").strip()
-    if not nome:
-        print("[ERRO] Nome nao pode ser vazio.")
-        return
-
-    unidade = input("Unidade (g / ml / un): ").strip().lower()
-    if unidade not in ("g", "ml", "un"):
-        print(f"[ERRO] Unidade '{unidade}' invalida. Use g, ml ou un.")
-        return
-
+    nome = input("Nome do item: ")
+    unidade = input("Unidade (g / ml / un): ")
     estoque_minimo = _ler_inteiro("Estoque minimo (ou 0): ")
     if estoque_minimo is None:
         return
-    if estoque_minimo < 0:
-        print("[ERRO] Estoque minimo nao pode ser negativo.")
-        return
 
-    with Session() as session:
-        item = cadastrar_item(session, nome, unidade, estoque_minimo)
-        print(f"\n[OK] Item cadastrado: {item}")
+    try:
+        with SessionLocal() as session:
+            item = cadastrar_item(session, nome, unidade, estoque_minimo)
+            print(f"\n[OK] Item cadastrado: {item}")
+    except EstoqueError as e:
+        print(f"\n[ERRO] {e}")
+
 
 
 def _tela_listar_itens():
-    """Exibe a lista de itens com saldo atual."""
+    """Exibe a lista de itens com saldo atual, marcando os que o serviço aponta como abaixo do mínimo."""
     print("\n--- Itens Cadastrados ---")
 
-    with Session() as session:
+    with SessionLocal() as session:
         itens = listar_itens(session, apenas_ativos=False)
 
         if not itens:
             print("  Nenhum item cadastrado.")
             return
+
+        # Pede ao serviço a lista dos IDs que estão em estado de alerta
+        abaixo_do_minimo = listar_itens_abaixo_do_minimo(session)
+        ids_em_alerta = {item.id for item, _ in abaixo_do_minimo}
 
         # Cabecalho da tabela
         print(f"  {'ID':<5} {'Nome':<25} {'Un':<5} {'Saldo':<10} {'Min':<10} {'Status'}")
@@ -96,13 +95,36 @@ def _tela_listar_itens():
             saldo = calcular_saldo(session, item.id)
             status = "ativo" if item.ativo else "INATIVO"
 
-            # Alerta visual se saldo abaixo do minimo
-            alerta = " [!]" if saldo < item.estoque_minimo and item.ativo else ""
+            # O terminal apenas verifica se o ID foi classificado em alerta pelo serviço
+            alerta = " [!]" if item.id in ids_em_alerta else ""
 
             print(
                 f"  {item.id:<5} {item.nome:<25} {item.unidade:<5} "
                 f"{saldo:<10} {item.estoque_minimo:<10} {status}{alerta}"
             )
+
+
+def _tela_alerta_estoque_minimo():
+    """Exibe relatório exclusivo de itens ativos cujo saldo está abaixo do estoque mínimo."""
+    print("\n--- RELATORIO: Itens Abaixo do Estoque Minimo ---")
+
+    with SessionLocal() as session:
+        itens_alerta = listar_itens_abaixo_do_minimo(session)
+
+        if not itens_alerta:
+            print("  [OK] Nenhum item ativo esta abaixo do estoque minimo.")
+            return
+
+        print(f"  {'ID':<5} {'Nome':<25} {'Un':<5} {'Saldo Atual':<12} {'Minimo':<10} {'Diferenca'}")
+        print(f"  {'-'*5} {'-'*25} {'-'*5} {'-'*12} {'-'*10} {'-'*10}")
+
+        for item, saldo in itens_alerta:
+            falta = item.estoque_minimo - saldo
+            print(
+                f"  {item.id:<5} {item.nome:<25} {item.unidade:<5} "
+                f"{saldo:<12} {item.estoque_minimo:<10} -{falta}{item.unidade}"
+            )
+
 
 
 def _tela_desativar_item():
@@ -114,7 +136,7 @@ def _tela_desativar_item():
         return
 
     try:
-        with Session() as session:
+        with SessionLocal() as session:
             item = desativar_item(session, item_id)
             print(f"\n[OK] Item desativado: {item}")
     except EstoqueError as e:
@@ -130,11 +152,50 @@ def _tela_reativar_item():
         return
 
     try:
-        with Session() as session:
+        with SessionLocal() as session:
             item = reativar_item(session, item_id)
             print(f"\n[OK] Item reativado: {item}")
     except EstoqueError as e:
         print(f"[ERRO] {e}")
+
+
+def _tela_editar_item():
+    """Coleta novos dados e edita um item existente."""
+    print("\n--- Editar Item ---")
+    item_id = _ler_inteiro("ID do item a editar: ")
+    if item_id is None:
+        return
+
+    try:
+        with SessionLocal() as session:
+            item_atual = buscar_item_por_id(session, item_id)
+            print(f"\nItem selecionado: {item_atual.nome}")
+            print(f"Unidade atual: {item_atual.unidade} | Estoque minimo atual: {item_atual.estoque_minimo}")
+            print("(Deixe em branco para manter o valor atual)\n")
+
+            novo_nome = input(f"Novo nome [{item_atual.nome}]: ").strip() or item_atual.nome
+            nova_unidade = input(f"Nova unidade [{item_atual.unidade}]: ").strip() or item_atual.unidade
+
+            minimo_str = input(f"Novo estoque minimo [{item_atual.estoque_minimo}]: ").strip()
+            if minimo_str == "":
+                novo_minimo = item_atual.estoque_minimo
+            else:
+                try:
+                    novo_minimo = int(minimo_str)
+                except ValueError:
+                    print(f"[ERRO] '{minimo_str}' nao e um numero valido.")
+                    return
+
+            item_editado = editar_item(
+                session=session,
+                item_id=item_id,
+                nome=novo_nome,
+                unidade=nova_unidade,
+                estoque_minimo=novo_minimo,
+            )
+            print(f"\n[OK] Item atualizado com sucesso: {item_editado}")
+    except EstoqueError as e:
+        print(f"\n[ERRO] {e}")
 
 
 def menu_itens():
@@ -143,8 +204,10 @@ def menu_itens():
         print("\n========== ITENS ==========")
         print("  1. Cadastrar item")
         print("  2. Listar itens")
-        print("  3. Desativar item")
-        print("  4. Reativar item")
+        print("  3. Editar item")
+        print("  4. Desativar item")
+        print("  5. Reativar item")
+        print("  6. Relatorio: Itens abaixo do estoque minimo")
         print("  0. Voltar")
 
         opcao = input("\nEscolha: ").strip()
@@ -154,15 +217,21 @@ def menu_itens():
         elif opcao == "2":
             _tela_listar_itens()
         elif opcao == "3":
-            _tela_desativar_item()
+            _tela_editar_item()
         elif opcao == "4":
+            _tela_desativar_item()
+        elif opcao == "5":
             _tela_reativar_item()
+        elif opcao == "6":
+            _tela_alerta_estoque_minimo()
         elif opcao == "0":
             break
         else:
             print("[ERRO] Opcao invalida.")
 
         _pausar()
+
+
 
 
 # =============================================================================
@@ -189,7 +258,7 @@ def _tela_registrar_entrada():
         return
 
     try:
-        with Session() as session:
+        with SessionLocal() as session:
             mov = registrar_movimentacao(
                 session=session,
                 item_id=item_id,
@@ -224,7 +293,7 @@ def _tela_registrar_saida():
         return
 
     try:
-        with Session() as session:
+        with SessionLocal() as session:
             mov = registrar_movimentacao(
                 session=session,
                 item_id=item_id,
@@ -247,7 +316,7 @@ def _tela_extrato_item():
         return
 
     try:
-        with Session() as session:
+        with SessionLocal() as session:
             item = buscar_item_por_id(session, item_id)
             movs = listar_movimentacoes(session, item_id)
             saldo = calcular_saldo(session, item_id)
