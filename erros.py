@@ -80,4 +80,9 @@ class UsuarioInativoError(EstoqueError):
     pass
 
 
+class UltimoAdministradorError(EstoqueError):
+    """A operação deixaria o sistema sem administrador ativo."""
+    pass
+
+
 

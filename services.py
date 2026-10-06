@@ -25,6 +25,7 @@ from erros import (
     UnidadeInvalidaError,
     UsuarioInativoError,
     UsuarioNaoEncontradoError,
+    UltimoAdministradorError,
 )
 from models import (
     Item,
@@ -139,13 +140,37 @@ def buscar_usuario_por_login(session: Session, login: str) -> Usuario:
     return usuario
 
 
+def _validar_nao_ser_ultimo_administrador(
+    session: Session,
+    usuario: Usuario,
+) -> None:
+    """Bloqueia operações que removeriam o último administrador ativo."""
+    if not usuario.ativo or usuario.papel != PapelUsuario.ADMINISTRADOR:
+        return
+
+    administradores_ativos = (
+        session.query(func.count(Usuario.id))
+        .filter(
+            Usuario.ativo.is_(True),
+            Usuario.papel == PapelUsuario.ADMINISTRADOR,
+        )
+        .scalar()
+    )
+    if administradores_ativos <= 1:
+        raise UltimoAdministradorError(
+            "Nao e permitido desativar ou rebaixar o ultimo administrador ativo."
+        )
+
+
 def mudar_papel_usuario(
     session: Session,
     usuario_id: int,
     novo_papel: PapelUsuario,
 ) -> Usuario:
-    """Atualiza o papel de um usuário existente."""
+    """Atualiza o papel sem permitir rebaixar o último administrador ativo."""
     usuario = buscar_usuario_por_id(session, usuario_id)
+    if novo_papel != PapelUsuario.ADMINISTRADOR:
+        _validar_nao_ser_ultimo_administrador(session, usuario)
     usuario.papel = novo_papel
     session.commit()
     session.refresh(usuario)
@@ -153,8 +178,9 @@ def mudar_papel_usuario(
 
 
 def desativar_usuario(session: Session, usuario_id: int) -> Usuario:
-    """Desativa usuário sem removê-lo do banco ou de seu histórico."""
+    """Desativa usuário, preservando o último administrador ativo."""
     usuario = buscar_usuario_por_id(session, usuario_id)
+    _validar_nao_ser_ultimo_administrador(session, usuario)
     usuario.ativo = False
     session.commit()
     session.refresh(usuario)
