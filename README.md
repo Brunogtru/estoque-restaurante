@@ -1,34 +1,39 @@
 # 📦 Sistema de Controle de Estoque para Restaurante
 
-Sistema local em Python para controle rigoroso de estoque, projetado com arquitetura limpa em camadas para possibilitar a reutilização total da lógica de negócios em futuras interfaces (ex.: API FastAPI para tablet de autoatendimento).
+Sistema local em Python para controle rigoroso de estoque, projetado com **arquitetura limpa em camadas**. Possui interface via terminal (CLI) e uma **API RESTful completa em FastAPI**, pronta para ser consumida por aplicações frontend (ex.: tablets de autoatendimento, dashboards web ou mobile).
 
 ---
 
 ## 🛠️ Stack Tecnológica
-- **Python 3**
-- **SQLAlchemy 2.x (ORM)**
-- **SQLite**
-- Interface interativa via Terminal
+- **Linguagem:** Python 3.10+
+- **ORM / Banco de Dados:** SQLAlchemy 2.x + SQLite
+- **API Web:** FastAPI + Pydantic v2
+- **Servidor ASGI:** Uvicorn
+- **Interfaces:** CLI (Terminal Interativo) e Web API (FastAPI / Swagger)
 
 ---
 
 ## 📐 Decisões de Design e Engenharia
 
-1. **Sem coluna de saldo**: O saldo é **sempre calculado** sob demanda com SQL condicional (`SUM(CASE WHEN tipo='ENTRADA' THEN qtd ELSE -qtd END)`). Elimina risco de inconsistência e dessincronização.
+1. **Sem coluna de saldo**: O saldo é **sempre calculado** sob demanda no banco via SQL condicional (`SUM(CASE WHEN tipo='ENTRADA' THEN qtd ELSE -qtd END)`). Elimina riscos de dessincronização e concorrência suja.
 2. **Menor unidade de medida**: Quantidades em números inteiros na menor unidade (`g`, `ml`, `un`). Dinheiro em centavos.
 3. **Quantidades estritamente positivas**: O `tipo` (`ENTRADA` / `SAIDA`) define o sinal matemático.
 4. **Compatibilidade estrita de Tipo e Motivo**:
-   - `ENTRADA` aceita apenas `COMPRA`.
-   - `SAIDA` aceita apenas `USO`, `PERDA` ou `VENCIMENTO`.
-5. **Imutabilidade das movimentações**: Transações de estoque nunca são editadas ou deletadas. Erros são corrigidos com novos lançamentos.
-6. **Soft Delete**: Itens nunca são excluídos do banco, apenas marcados como inativos (`ativo = False`), preservando a rastreabilidade do histórico.
+   - `ENTRADA` aceita exclusivamente `COMPRA`.
+   - `SAIDA` aceita exclusivamente `USO`, `PERDA` ou `VENCIMENTO`.
+5. **Imutabilidade das movimentações**: Registros de estoque nunca são editados ou apagados, servindo de trilha de auditoria contábil.
+6. **Soft Delete**: Itens nunca são excluídos fisicamente do banco; são marcados com `ativo = False`, mantendo a integridade referencial do histórico.
 7. **Regras de Edição de Itens**:
    - Itens inativos não podem ser editados (devem ser reativados primeiro).
    - A unidade de medida só pode ser alterada se o item ainda **não possuir** nenhuma movimentação registrada.
-8. **Alerta de Estoque Mínimo Otimizado**: Consulta agregada única no banco com `LEFT JOIN` e cláusula `HAVING saldo < estoque_minimo`, evitando problemas de performance N+1.
-9. **Validação antes da persistência**: Todas as regras de negócio residem exclusivamente em `services.py`. Se qualquer validação falhar, nada entra no banco.
-10. **Foreign Keys ativas no SQLite**: Hook com `PRAGMA foreign_keys = ON` na abertura de cada conexão via SQLAlchemy event listener.
-11. **Fábrica de Sessões Desacoplada**: Utilização de `SessionLocal = sessionmaker(bind=engine)` para conexões curtas e sem conflito de tipagem.
+8. **Alerta de Estoque Mínimo Otimizado**: Consulta agregada única no banco com `LEFT JOIN` e cláusula `HAVING saldo < estoque_minimo`, evitando o clássico problema de performance N+1 queries.
+9. **Desacoplamento em Camadas**:
+   - `models.py`: Apenas o schema do banco (ORM).
+   - `services.py`: **100% da lógica de negócio e validações**. Não usa `print`, `input` nem detalhes de HTTP.
+   - `api/schemas.py`: Contratos Pydantic de entrada e saída (DTOs), prevenindo ataques de Mass Assignment.
+   - `api/rotas/`: Apenas traduzem requisições HTTP, chamam o `services.py` e devolvem JSON.
+   - `api/app.py`: Tratador de erros central que converte exceções de domínio em status HTTP semânticos (404, 409, 422).
+10. **Foreign Keys ativas no SQLite**: Hook via SQLAlchemy event listener executando `PRAGMA foreign_keys = ON` em cada conexão.
 
 ---
 
@@ -36,27 +41,92 @@ Sistema local em Python para controle rigoroso de estoque, projetado com arquite
 
 ```
 estoque-restaurante/
-├── main.py          # Inicialização e ponto de entrada da aplicação
-├── db.py            # Engine, SessionLocal e ativação de FKs do SQLite
-├── models.py        # Modelos ORM (Item, Movimentacao, Enums)
-├── services.py      # Lógica de negócio pura (saldo, validações, consultas agregadas)
-├── terminal.py      # Interface do usuário via terminal (menus e parsing)
-├── erros.py         # Exceções customizadas de domínio (herdeiras de EstoqueError)
-├── requirements.txt # Dependências do projeto
-├── .gitignore       # Arquivos ignorados pelo controle de versão
-└── estoque.db       # Banco de dados local SQLite (gerado na execução)
+├── api/
+│   ├── __init__.py          # Pacote da API
+│   ├── app.py               # Instância FastAPI, lifespan e exception handler central
+│   ├── dependencias.py      # Injeção de dependência get_db (SessionLocal por request)
+│   ├── schemas.py           # Modelos Pydantic de entrada e saída (DTOs)
+│   └── rotas/
+│       ├── __init__.py      # Pacote de rotas
+│       ├── itens.py         # Endpoints de /itens (CRUD, alerta e extrato)
+│       └── movimentacoes.py # Endpoints de /movimentacoes (registro de entrada/saída)
+├── db.py                    # Engine, SessionLocal e ativação de FKs do SQLite
+├── models.py                # Modelos ORM (Item, Movimentacao, Enums)
+├── services.py              # Lógica de negócio pura (saldo, validações, consultas)
+├── terminal.py              # Interface interativa via terminal (CLI)
+├── erros.py                 # Exceções customizadas de domínio (herdeiras de EstoqueError)
+├── main.py                  # Ponto de entrada unificado (inicia CLI ou API)
+├── requirements.txt         # Dependências do projeto
+├── .gitignore               # Arquivos ignorados pelo Git (banco local, caches, etc.)
+└── estoque.db               # Banco de dados local SQLite (gerado na execução)
 ```
 
 ---
 
 ## 🚀 Como Executar
 
-No terminal dentro da pasta do projeto:
-
+### 1. Instalar as dependências
 ```bash
-# 1. Instalar dependências (caso ainda não tenha feito)
 py -m pip install -r requirements.txt
+```
 
-# 2. Executar o sistema
+### 2. Executar a API Web (FastAPI)
+Você pode iniciar pelo `main.py`:
+```bash
+py main.py --api
+```
+Ou diretamente com o `uvicorn`:
+```bash
+py -m uvicorn api.app:app --reload
+```
+
+Acesse a **documentação interativa automática (Swagger UI)** no navegador:
+👉 **[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)**
+
+### 3. Executar o Terminal Interativo (CLI)
+Caso prefira usar o sistema pelo console:
+```bash
 py main.py
+```
+
+---
+
+## 📡 Endpoints da API REST
+
+### Itens (`/itens`)
+| Método | Rota | Descrição | Status Sucesso |
+|---|---|---|---|
+| `GET` | `/itens` | Lista todos os itens e seus saldos calculados (`?apenas_ativos=true/false`) | `200 OK` |
+| `POST` | `/itens` | Cadastra um novo item no estoque | `201 Created` |
+| `GET` | `/itens/abaixo-do-minimo` | Relatório de itens com saldo abaixo do estoque mínimo | `200 OK` |
+| `GET` | `/itens/{id}` | Busca um item específico por ID com seu saldo | `200 OK` |
+| `PUT` | `/itens/{id}` | Edita dados de um item (nome, unidade, estoque mínimo) | `200 OK` |
+| `PATCH` | `/itens/{id}/desativar` | Desativa um item (soft delete) | `200 OK` |
+| `PATCH` | `/itens/{id}/reativar` | Reativa um item desativado | `200 OK` |
+| `GET` | `/itens/{id}/saldo` | Consulta apenas o valor numérico do saldo do item | `200 OK` |
+| `GET` | `/itens/{id}/extrato` | Histórico cronológico completo de movimentações do item | `200 OK` |
+
+### Movimentações (`/movimentacoes`)
+| Método | Rota | Descrição | Status Sucesso |
+|---|---|---|---|
+| `POST` | `/movimentacoes` | Registra entrada ou saída validando saldo e compatibilidade | `201 Created` |
+
+---
+
+## 🛑 Tratamento de Erros Semântico (HTTP)
+
+As exceções de domínio disparadas pelo `services.py` são interceptadas e convertidas em respostas JSON padronizadas com o status HTTP correto:
+
+| Exceção | Status HTTP | Significado |
+|---|---|---|
+| `ItemNaoEncontradoError` | **404 Not Found** | O ID informado não existe. |
+| `NomeInvalidoError`<br>`UnidadeInvalidaError`<br>`EstoqueMinimoInvalidoError`<br>`QuantidadeInvalidaError` | **422 Unprocessable Content** | Violação de formato ou tipo de dado. |
+| `EstoqueInsuficienteError`<br>`ItemInativoError`<br>`MotivoIncompativelError`<br>`AlteracaoUnidadeProibidaError` | **409 Conflict** | Violação do estado atual ou de regra de negócio do estoque. |
+
+**Exemplo de resposta de erro:**
+```json
+{
+  "erro": "EstoqueInsuficienteError",
+  "mensagem": "Saldo insuficiente para 'Farinha de Trigo'. Disponivel: 3000g, solicitado: 5000g."
+}
 ```
