@@ -108,7 +108,9 @@ Acesse a **documentação interativa automática (Swagger UI)** no navegador:
 ### Movimentações (`/movimentacoes`)
 | Método | Rota | Descrição | Status Sucesso |
 |---|---|---|---|
-| `POST` | `/movimentacoes` | Registra entrada ou saída validando saldo e compatibilidade | `201 Created` |
+| `POST` | `/movimentacoes` | Registra entrada ou saída; resposta inclui o nome de quem lançou | `201 Created` |
+
+> **Campo provisório:** o corpo de `POST /movimentacoes` recebe `usuario_id` nesta etapa. Na Etapa 3, esse campo sairá do schema e o ID virá do usuário autenticado.
 
 ### Usuários (`/usuarios`)
 
@@ -131,9 +133,9 @@ As exceções de domínio disparadas pelo `services.py` são interceptadas e con
 
 | Exceção | Status HTTP | Significado |
 |---|---|---|
-| `ItemNaoEncontradoError` | **404 Not Found** | O ID informado não existe. |
-| `NomeInvalidoError`<br>`UnidadeInvalidaError`<br>`EstoqueMinimoInvalidoError`<br>`QuantidadeInvalidaError` | **422 Unprocessable Content** | Violação de formato ou tipo de dado. |
-| `EstoqueInsuficienteError`<br>`ItemInativoError`<br>`MotivoIncompativelError`<br>`AlteracaoUnidadeProibidaError` | **409 Conflict** | Violação do estado atual ou de regra de negócio do estoque. |
+| `ItemNaoEncontradoError`<br>`UsuarioNaoEncontradoError` | **404 Not Found** | O item ou usuário informado não existe. |
+| `NomeInvalidoError`<br>`UnidadeInvalidaError`<br>`EstoqueMinimoInvalidoError`<br>`QuantidadeInvalidaError`<br>`SenhaInvalidaError` | **422 Unprocessable Content** | Violação dos requisitos de formato ou dos dados aceitos pelo domínio. |
+| `EstoqueInsuficienteError`<br>`ItemInativoError`<br>`MotivoIncompativelError`<br>`AlteracaoUnidadeProibidaError`<br>`LoginDuplicadoError`<br>`UsuarioInativoError`<br>`UltimoAdministradorError` | **409 Conflict** | Conflito com o estado atual, login duplicado ou proteção do último administrador. |
 
 **Exemplo de resposta de erro:**
 ```json
@@ -143,4 +145,4 @@ As exceções de domínio disparadas pelo `services.py` são interceptadas e con
 }
 ```
 
-**Mapeamento provisório:** o mapeamento HTTP específico das novas exceções de usuário será feito na Parte F. Até lá, exceções de domínio ainda não registradas no tratador central recebem o status genérico `400 Bad Request`; erros de validação estrutural dos schemas Pydantic continuam sendo tratados pelo FastAPI como `422 Unprocessable Entity`.
+Erros de validação estrutural dos schemas Pydantic também são tratados pelo FastAPI como `422 Unprocessable Entity`. O tratador central mantém a mensagem original da exceção no campo `mensagem` da resposta.

@@ -18,6 +18,11 @@ from erros import (
     ItemInativoError,
     MotivoIncompativelError,
     AlteracaoUnidadeProibidaError,
+        LoginDuplicadoError,
+        SenhaInvalidaError,
+        UsuarioNaoEncontradoError,
+        UsuarioInativoError,
+        UltimoAdministradorError,
 )
 from api.rotas.itens import router as router_itens
 from api.rotas.movimentacoes import router as router_movimentacoes
@@ -45,18 +50,23 @@ app = FastAPI(
 STATUS_POR_EXCECAO = {
     # 404 Not Found: recurso inexistente
     ItemNaoEncontradoError: status.HTTP_404_NOT_FOUND,
+    UsuarioNaoEncontradoError: status.HTTP_404_NOT_FOUND,
 
     # 422 Unprocessable Entity: dados inválidos de domínio
     NomeInvalidoError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     UnidadeInvalidaError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     EstoqueMinimoInvalidoError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     QuantidadeInvalidaError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    SenhaInvalidaError: status.HTTP_422_UNPROCESSABLE_CONTENT,
 
     # 409 Conflict: violação de regra de negócio / estado conflitante
     EstoqueInsuficienteError: status.HTTP_409_CONFLICT,
     ItemInativoError: status.HTTP_409_CONFLICT,
     MotivoIncompativelError: status.HTTP_409_CONFLICT,
     AlteracaoUnidadeProibidaError: status.HTTP_409_CONFLICT,
+    LoginDuplicadoError: status.HTTP_409_CONFLICT,
+    UsuarioInativoError: status.HTTP_409_CONFLICT,
+    UltimoAdministradorError: status.HTTP_409_CONFLICT,
 }
 
 

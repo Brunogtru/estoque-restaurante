@@ -6,7 +6,7 @@ das respostas, sem expor os models do SQLAlchemy diretamente.
 """
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasPath, BaseModel, ConfigDict, Field
 from models import TipoMovimentacao, MotivoMovimentacao, PapelUsuario
 
 
@@ -79,17 +79,23 @@ class ItemAlertaResposta(BaseModel):
 # --- Schemas de Movimentação -------------------------------------------------
 
 class MovimentacaoCriar(BaseModel):
-    """Payload de entrada para registrar movimentação."""
+    """Payload de movimentação; usuario_id é provisório até a Etapa 3."""
     item_id: int = Field(..., gt=0, description="ID do item")
+    usuario_id: int = Field(
+        ...,
+        gt=0,
+        description="ID do usuário responsável (provisório até a autenticação da Etapa 3)",
+    )
     tipo: TipoMovimentacao = Field(..., description="ENTRADA ou SAIDA")
     quantidade: int = Field(..., gt=0, description="Quantidade estritamente positiva na menor unidade")
     motivo: MotivoMovimentacao = Field(..., description="Motivo (COMPRA, USO, PERDA, VENCIMENTO)")
 
 
 class MovimentacaoResposta(BaseModel):
-    """Representação de uma movimentação registrada."""
+    """Movimentação registrada, incluindo o nome de quem a lançou."""
     id: int
     item_id: int
+    usuario_nome: str = Field(validation_alias=AliasPath("usuario", "nome"))
     tipo: TipoMovimentacao
     quantidade: int
     motivo: MotivoMovimentacao
