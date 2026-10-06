@@ -1,6 +1,6 @@
 # 📦 Sistema de Controle de Estoque para Restaurante
 
-Sistema local em Python para controle rigoroso de estoque, projetado com **arquitetura limpa em camadas**. Possui interface via terminal (CLI) e uma **API RESTful completa em FastAPI**, pronta para ser consumida por aplicações frontend (ex.: tablets de autoatendimento, dashboards web ou mobile).
+Sistema local em Python para controle rigoroso de estoque, projetado com **arquitetura limpa em camadas**. A interface ativa é uma **API RESTful em FastAPI**, preparada para ser consumida por aplicações frontend (ex.: tablets de autoatendimento, dashboards web ou mobile).
 
 ---
 
@@ -9,7 +9,7 @@ Sistema local em Python para controle rigoroso de estoque, projetado com **arqui
 - **ORM / Banco de Dados:** SQLAlchemy 2.x + SQLite
 - **API Web:** FastAPI + Pydantic v2
 - **Servidor ASGI:** Uvicorn
-- **Interfaces:** CLI (Terminal Interativo) e Web API (FastAPI / Swagger)
+- **Interface ativa:** Web API (FastAPI / Swagger)
 
 ---
 
@@ -53,7 +53,8 @@ estoque-restaurante/
 ├── db.py                    # Engine, SessionLocal e ativação de FKs do SQLite
 ├── models.py                # Modelos ORM (Item, Movimentacao, Enums)
 ├── services.py              # Lógica de negócio pura (saldo, validações, consultas)
-├── terminal.py              # Interface interativa via terminal (CLI)
+├── legacy/
+│   └── terminal.py          # CLI arquivada, não mantida nem usada pelo fluxo principal
 ├── erros.py                 # Exceções customizadas de domínio (herdeiras de EstoqueError)
 ├── main.py                  # Ponto de entrada unificado (inicia CLI ou API)
 ├── requirements.txt         # Dependências do projeto
@@ -66,28 +67,23 @@ estoque-restaurante/
 ## 🚀 Como Executar
 
 ### 1. Instalar as dependências
-```bash
-py -m pip install -r requirements.txt
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 ### 2. Executar a API Web (FastAPI)
-Você pode iniciar pelo `main.py`:
-```bash
-py main.py --api
+```powershell
+.venv\Scripts\python.exe main.py
 ```
 Ou diretamente com o `uvicorn`:
-```bash
-py -m uvicorn api.app:app --reload
+```powershell
+.venv\Scripts\python.exe -m uvicorn api.app:app --reload
 ```
 
 Acesse a **documentação interativa automática (Swagger UI)** no navegador:
 👉 **[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)**
 
-### 3. Executar o Terminal Interativo (CLI)
-Caso prefira usar o sistema pelo console:
-```bash
-py main.py
-```
+> **Terminal arquivado:** `legacy/terminal.py` é mantido apenas como referência histórica. Não faz parte do fluxo principal e não é mais mantido.
 
 ---
 
