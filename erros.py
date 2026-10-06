@@ -60,4 +60,24 @@ class AlteracaoUnidadeProibidaError(EstoqueError):
     pass
 
 
+class LoginDuplicadoError(EstoqueError):
+    """O login informado já pertence a outro usuário."""
+    pass
+
+
+class SenhaInvalidaError(EstoqueError):
+    """A senha não atende aos requisitos mínimos definidos pelo domínio."""
+    pass
+
+
+class UsuarioNaoEncontradoError(EstoqueError):
+    """O usuário informado não existe no banco."""
+    pass
+
+
+class UsuarioInativoError(EstoqueError):
+    """O usuário existe, mas está desativado."""
+    pass
+
+
 

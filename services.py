@@ -9,6 +9,7 @@ Nunca faz print() nem input() — apenas retorna dados ou lança exceções de e
 from sqlalchemy import case, func
 # pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
+from argon2 import PasswordHasher
 
 from erros import (
     AlteracaoUnidadeProibidaError,
@@ -16,12 +17,25 @@ from erros import (
     EstoqueMinimoInvalidoError,
     ItemInativoError,
     ItemNaoEncontradoError,
+    LoginDuplicadoError,
     MotivoIncompativelError,
     NomeInvalidoError,
     QuantidadeInvalidaError,
+    SenhaInvalidaError,
     UnidadeInvalidaError,
+    UsuarioInativoError,
+    UsuarioNaoEncontradoError,
 )
-from models import Item, Movimentacao, TipoMovimentacao, MotivoMovimentacao
+from models import (
+    Item,
+    Movimentacao,
+    TipoMovimentacao,
+    MotivoMovimentacao,
+    PapelUsuario,
+    Usuario,
+)
+
+_password_hasher = PasswordHasher()
 
 UNIDADES_VALIDAS = ("g", "ml", "un")
 
@@ -34,6 +48,126 @@ MOTIVOS_POR_TIPO = {
         MotivoMovimentacao.VENCIMENTO,
     },
 }
+
+
+# USUARIOS
+
+def _normalizar_login(login: str) -> str:
+    """Padroniza login para que espaços e maiúsculas não criem contas distintas."""
+    return login.strip().lower() if isinstance(login, str) else ""
+
+
+def _validar_senha(senha: str) -> None:
+    """Exige senha de 8 a 128 caracteres que não seja só espaço em branco."""
+    if not isinstance(senha, str) or not senha.strip():
+        raise SenhaInvalidaError("A senha nao pode ser vazia ou composta apenas por espacos.")
+    if len(senha) < 8:
+        raise SenhaInvalidaError("A senha deve ter no minimo 8 caracteres.")
+    if len(senha) > 128:
+        raise SenhaInvalidaError("A senha deve ter no maximo 128 caracteres.")
+
+
+def cadastrar_usuario(
+    session: Session,
+    nome: str,
+    login: str,
+    senha: str,
+    papel: PapelUsuario,
+) -> Usuario:
+    """Cadastra usuário sem checagem de permissão, inclusive para bootstrap do admin."""
+    nome_limpo = nome.strip() if isinstance(nome, str) else ""
+    if not nome_limpo:
+        raise NomeInvalidoError("Nome do usuario nao pode ser vazio.")
+
+    login_normalizado = _normalizar_login(login)
+    if not login_normalizado:
+        raise NomeInvalidoError("Login do usuario nao pode ser vazio.")
+
+    _validar_senha(senha)
+
+    existe = (
+        session.query(Usuario.id)
+        .filter(Usuario.login == login_normalizado)
+        .first()
+        is not None
+    )
+    if existe:
+        raise LoginDuplicadoError(f"O login '{login_normalizado}' ja esta cadastrado.")
+
+    # PasswordHasher cria um salt aleatório e o inclui no hash retornado.
+    senha_hash = _password_hasher.hash(senha)
+    usuario = Usuario(
+        nome=nome_limpo,
+        login=login_normalizado,
+        senha_hash=senha_hash,
+        papel=papel,
+    )
+    session.add(usuario)
+    session.commit()
+    session.refresh(usuario)
+    return usuario
+
+
+def listar_usuarios(session: Session, apenas_ativos: bool = True) -> list[Usuario]:
+    """Lista usuários por nome, ativos por padrão."""
+    query = session.query(Usuario)
+    if apenas_ativos:
+        query = query.filter(Usuario.ativo == True)
+    return query.order_by(Usuario.nome).all()
+
+
+def buscar_usuario_por_id(session: Session, usuario_id: int) -> Usuario:
+    """Busca usuário pelo ID ou lança UsuarioNaoEncontradoError."""
+    usuario = session.get(Usuario, usuario_id)
+    if usuario is None:
+        raise UsuarioNaoEncontradoError(f"Usuario com id={usuario_id} nao encontrado.")
+    return usuario
+
+
+def buscar_usuario_por_login(session: Session, login: str) -> Usuario:
+    """Busca usuário pelo login normalizado ou lança UsuarioNaoEncontradoError."""
+    login_normalizado = _normalizar_login(login)
+    usuario = (
+        session.query(Usuario)
+        .filter(Usuario.login == login_normalizado)
+        .first()
+    )
+    if usuario is None:
+        raise UsuarioNaoEncontradoError(
+            f"Usuario com login '{login_normalizado}' nao encontrado."
+        )
+    return usuario
+
+
+def mudar_papel_usuario(
+    session: Session,
+    usuario_id: int,
+    novo_papel: PapelUsuario,
+) -> Usuario:
+    """Atualiza o papel de um usuário existente."""
+    usuario = buscar_usuario_por_id(session, usuario_id)
+    usuario.papel = novo_papel
+    session.commit()
+    session.refresh(usuario)
+    return usuario
+
+
+def desativar_usuario(session: Session, usuario_id: int) -> Usuario:
+    """Desativa usuário sem removê-lo do banco ou de seu histórico."""
+    usuario = buscar_usuario_por_id(session, usuario_id)
+    usuario.ativo = False
+    session.commit()
+    session.refresh(usuario)
+    return usuario
+
+
+def reativar_usuario(session: Session, usuario_id: int) -> Usuario:
+    """Reativa usuário previamente desativado."""
+    usuario = buscar_usuario_por_id(session, usuario_id)
+    usuario.ativo = True
+    session.commit()
+    session.refresh(usuario)
+    return usuario
 
 
 # ITENS
