@@ -2,13 +2,15 @@
 
 from getpass import getpass
 
-from db import SessionLocal
+from db import SessionLocal, criar_tabelas
 from erros import EstoqueError
 from models import PapelUsuario
 from services import cadastrar_usuario, existe_administrador_ativo
 
 
 def main() -> None:
+    criar_tabelas()
+
     with SessionLocal() as session:
         if existe_administrador_ativo(session):
             print("Ja existe um administrador ativo; este script cria apenas o administrador inicial.")
