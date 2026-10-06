@@ -42,6 +42,39 @@ class MotivoMovimentacao(enum.Enum):
     VENCIMENTO = "VENCIMENTO"
 
 
+class PapelUsuario(enum.Enum):
+    """Perfis de acesso do sistema."""
+    ADMINISTRADOR = "ADMINISTRADOR"
+    ESTOQUISTA = "ESTOQUISTA"
+    COZINHA = "COZINHA"
+
+
+# --- Modelo: Usuario ---------------------------------------------------------
+
+class Usuario(Base):
+    """Representa uma pessoa que opera o sistema."""
+
+    __tablename__ = "usuarios"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    nome = Column(String(100), nullable=False)
+    login = Column(String(50), nullable=False, unique=True, index=True)
+    senha_hash = Column(String(255), nullable=False)
+    papel = Column(Enum(PapelUsuario), nullable=False)
+    ativo = Column(Boolean, nullable=False, default=True)
+    criado_em = Column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    movimentacoes = relationship("Movimentacao", back_populates="usuario")
+
+    def __repr__(self) -> str:
+        status = "ativo" if self.ativo else "inativo"
+        return f"Usuario(id={self.id}, login='{self.login}', papel={self.papel.value}, {status})"
+
+
 # --- Modelo: Item ------------------------------------------------------------
 
 class Item(Base):
@@ -77,6 +110,11 @@ class Movimentacao(Base):
     # FK para itens. ondelete="RESTRICT" impede deletar um item que tem movimentações
     # (mesmo que a gente não delete itens, é uma proteção extra no banco).
     item_id = Column(Integer, ForeignKey("itens.id", ondelete="RESTRICT"), nullable=False)
+    usuario_id = Column(
+        Integer,
+        ForeignKey("usuarios.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
 
     tipo = Column(Enum(TipoMovimentacao), nullable=False)
     quantidade = Column(Integer, nullable=False)  # sempre positivo, em menor unidade
@@ -92,10 +130,11 @@ class Movimentacao(Base):
 
     # Relacionamento inverso: Movimentacao.item dá acesso ao objeto Item.
     item = relationship("Item", back_populates="movimentacoes")
+    usuario = relationship("Usuario", back_populates="movimentacoes")
 
     def __repr__(self) -> str:
         return (
-            f"Movimentacao(id={self.id}, item_id={self.item_id}, "
+            f"Movimentacao(id={self.id}, item_id={self.item_id}, usuario_id={self.usuario_id}, "
             f"tipo={self.tipo.value}, qtd={self.quantidade}, motivo={self.motivo.value})"
         )
 

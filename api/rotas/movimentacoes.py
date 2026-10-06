@@ -19,17 +19,20 @@ def registrar_movimentacao(
 ):
     """
     Registra uma movimentação de estoque (ENTRADA ou SAIDA).
+    O usuario_id no corpo é provisório; na Etapa 3 virá do usuário autenticado.
 
     Validações aplicadas em services.py:
     1. Quantidade > 0
     2. Compatibilidade estrita entre tipo e motivo (ENTRADA: COMPRA; SAIDA: USO/PERDA/VENCIMENTO)
     3. Item deve existir
     4. Item deve estar ativo
-    5. Se for SAIDA, saldo atual deve ser suficiente
+    5. Usuário deve existir e estar ativo
+    6. Se for SAIDA, saldo atual deve ser suficiente
     """
     return services.registrar_movimentacao(
         session=session,
         item_id=dados.item_id,
+        usuario_id=dados.usuario_id,
         tipo=dados.tipo,
         quantidade=dados.quantidade,
         motivo=dados.motivo,

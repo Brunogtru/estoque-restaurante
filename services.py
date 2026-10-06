@@ -8,7 +8,8 @@ Nunca faz print() nem input() — apenas retorna dados ou lança exceções de e
 # pyrefly: ignore [missing-import]
 from sqlalchemy import case, func
 # pyrefly: ignore [missing-import]
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+from argon2 import PasswordHasher
 
 from erros import (
     AlteracaoUnidadeProibidaError,
@@ -16,12 +17,26 @@ from erros import (
     EstoqueMinimoInvalidoError,
     ItemInativoError,
     ItemNaoEncontradoError,
+    LoginDuplicadoError,
     MotivoIncompativelError,
     NomeInvalidoError,
     QuantidadeInvalidaError,
+    SenhaInvalidaError,
     UnidadeInvalidaError,
+    UsuarioInativoError,
+    UsuarioNaoEncontradoError,
+    UltimoAdministradorError,
 )
-from models import Item, Movimentacao, TipoMovimentacao, MotivoMovimentacao
+from models import (
+    Item,
+    Movimentacao,
+    TipoMovimentacao,
+    MotivoMovimentacao,
+    PapelUsuario,
+    Usuario,
+)
+
+_password_hasher = PasswordHasher()
 
 UNIDADES_VALIDAS = ("g", "ml", "un")
 
@@ -34,6 +49,164 @@ MOTIVOS_POR_TIPO = {
         MotivoMovimentacao.VENCIMENTO,
     },
 }
+
+
+# USUARIOS
+
+def _normalizar_login(login: str) -> str:
+    """Padroniza login para que espaços e maiúsculas não criem contas distintas."""
+    return login.strip().lower() if isinstance(login, str) else ""
+
+
+def _validar_senha(senha: str) -> None:
+    """Exige senha de 8 a 128 caracteres que não seja só espaço em branco."""
+    if not isinstance(senha, str) or not senha.strip():
+        raise SenhaInvalidaError("A senha nao pode ser vazia ou composta apenas por espacos.")
+    if len(senha) < 8:
+        raise SenhaInvalidaError("A senha deve ter no minimo 8 caracteres.")
+    if len(senha) > 128:
+        raise SenhaInvalidaError("A senha deve ter no maximo 128 caracteres.")
+
+
+def cadastrar_usuario(
+    session: Session,
+    nome: str,
+    login: str,
+    senha: str,
+    papel: PapelUsuario,
+) -> Usuario:
+    """Cadastra usuário sem checagem de permissão, inclusive para bootstrap do admin."""
+    nome_limpo = nome.strip() if isinstance(nome, str) else ""
+    if not nome_limpo:
+        raise NomeInvalidoError("Nome do usuario nao pode ser vazio.")
+
+    login_normalizado = _normalizar_login(login)
+    if not login_normalizado:
+        raise NomeInvalidoError("Login do usuario nao pode ser vazio.")
+
+    _validar_senha(senha)
+
+    existe = (
+        session.query(Usuario.id)
+        .filter(Usuario.login == login_normalizado)
+        .first()
+        is not None
+    )
+    if existe:
+        raise LoginDuplicadoError(f"O login '{login_normalizado}' ja esta cadastrado.")
+
+    # PasswordHasher cria um salt aleatório e o inclui no hash retornado.
+    senha_hash = _password_hasher.hash(senha)
+    usuario = Usuario(
+        nome=nome_limpo,
+        login=login_normalizado,
+        senha_hash=senha_hash,
+        papel=papel,
+    )
+    session.add(usuario)
+    session.commit()
+    session.refresh(usuario)
+    return usuario
+
+
+def listar_usuarios(session: Session, apenas_ativos: bool = True) -> list[Usuario]:
+    """Lista usuários por nome, ativos por padrão."""
+    query = session.query(Usuario)
+    if apenas_ativos:
+        query = query.filter(Usuario.ativo == True)
+    return query.order_by(Usuario.nome).all()
+
+
+def existe_administrador_ativo(session: Session) -> bool:
+    """Indica se há ao menos um administrador atualmente ativo."""
+    return (
+        session.query(Usuario.id)
+        .filter(
+            Usuario.ativo.is_(True),
+            Usuario.papel == PapelUsuario.ADMINISTRADOR,
+        )
+        .first()
+        is not None
+    )
+
+
+def buscar_usuario_por_id(session: Session, usuario_id: int) -> Usuario:
+    """Busca usuário pelo ID ou lança UsuarioNaoEncontradoError."""
+    usuario = session.get(Usuario, usuario_id)
+    if usuario is None:
+        raise UsuarioNaoEncontradoError(f"Usuario com id={usuario_id} nao encontrado.")
+    return usuario
+
+
+def buscar_usuario_por_login(session: Session, login: str) -> Usuario:
+    """Busca usuário pelo login normalizado ou lança UsuarioNaoEncontradoError."""
+    login_normalizado = _normalizar_login(login)
+    usuario = (
+        session.query(Usuario)
+        .filter(Usuario.login == login_normalizado)
+        .first()
+    )
+    if usuario is None:
+        raise UsuarioNaoEncontradoError(
+            f"Usuario com login '{login_normalizado}' nao encontrado."
+        )
+    return usuario
+
+
+def _validar_nao_ser_ultimo_administrador(
+    session: Session,
+    usuario: Usuario,
+) -> None:
+    """Bloqueia operações que removeriam o último administrador ativo."""
+    if not usuario.ativo or usuario.papel != PapelUsuario.ADMINISTRADOR:
+        return
+
+    administradores_ativos = (
+        session.query(func.count(Usuario.id))
+        .filter(
+            Usuario.ativo.is_(True),
+            Usuario.papel == PapelUsuario.ADMINISTRADOR,
+        )
+        .scalar()
+    )
+    if administradores_ativos <= 1:
+        raise UltimoAdministradorError(
+            "Nao e permitido desativar ou rebaixar o ultimo administrador ativo."
+        )
+
+
+def mudar_papel_usuario(
+    session: Session,
+    usuario_id: int,
+    novo_papel: PapelUsuario,
+) -> Usuario:
+    """Atualiza o papel sem permitir rebaixar o último administrador ativo."""
+    usuario = buscar_usuario_por_id(session, usuario_id)
+    if novo_papel != PapelUsuario.ADMINISTRADOR:
+        _validar_nao_ser_ultimo_administrador(session, usuario)
+    usuario.papel = novo_papel
+    session.commit()
+    session.refresh(usuario)
+    return usuario
+
+
+def desativar_usuario(session: Session, usuario_id: int) -> Usuario:
+    """Desativa usuário, preservando o último administrador ativo."""
+    usuario = buscar_usuario_por_id(session, usuario_id)
+    _validar_nao_ser_ultimo_administrador(session, usuario)
+    usuario.ativo = False
+    session.commit()
+    session.refresh(usuario)
+    return usuario
+
+
+def reativar_usuario(session: Session, usuario_id: int) -> Usuario:
+    """Reativa usuário previamente desativado."""
+    usuario = buscar_usuario_por_id(session, usuario_id)
+    usuario.ativo = True
+    session.commit()
+    session.refresh(usuario)
+    return usuario
 
 
 # ITENS
@@ -309,6 +482,7 @@ def calcular_saldo(session: Session, item_id: int) -> int:
 def registrar_movimentacao(
     session: Session,
     item_id: int,
+    usuario_id: int,
     tipo: TipoMovimentacao,
     quantidade: int,
     motivo: MotivoMovimentacao,
@@ -319,8 +493,8 @@ def registrar_movimentacao(
     Ordem das validações:
     1. Quantidade deve ser > 0
     2. Motivo deve ser compatível com o tipo (ENTRADA só COMPRA; SAIDA só USO/PERDA/VENCIMENTO)
-    3. Item deve existir no banco
-    4. Item deve estar ativo
+    3. Item deve existir e estar ativo
+    4. Usuário deve existir e estar ativo
     5. Se for SAIDA, saldo não pode ficar negativo
 
     Se qualquer validação falhar, lança exceção e nada é gravado.
@@ -328,6 +502,7 @@ def registrar_movimentacao(
     Args:
         session: sessão do banco.
         item_id: id do item.
+        usuario_id: id do usuário responsável pela movimentação.
         tipo: TipoMovimentacao.ENTRADA ou TipoMovimentacao.SAIDA.
         quantidade: valor positivo na menor unidade.
         motivo: MotivoMovimentacao (COMPRA, USO, PERDA, VENCIMENTO).
@@ -340,6 +515,8 @@ def registrar_movimentacao(
         MotivoIncompativelError: se motivo não é permitido para o tipo.
         ItemNaoEncontradoError: se item_id não existe.
         ItemInativoError: se item está desativado.
+        UsuarioNaoEncontradoError: se usuario_id não existe.
+        UsuarioInativoError: se o usuário está desativado.
         EstoqueInsuficienteError: se saída deixaria saldo negativo.
     """
     # 1. Quantidade positiva
@@ -357,16 +534,21 @@ def registrar_movimentacao(
             f"Motivos permitidos: {permitidos_str}."
         )
 
-    # 3. Item existe? (buscar_item_por_id já lança ItemNaoEncontradoError se não)
+    # 3. Item existe e está ativo?
     item = buscar_item_por_id(session, item_id)
-
-    # 3. Item ativo?
     if not item.ativo:
         raise ItemInativoError(
             f"Item '{item.nome}' (id={item.id}) esta inativo."
         )
 
-    # 4. Se for saída, verificar saldo
+    # 4. Usuário existe e está ativo?
+    usuario = buscar_usuario_por_id(session, usuario_id)
+    if not usuario.ativo:
+        raise UsuarioInativoError(
+            f"Usuario '{usuario.login}' (id={usuario.id}) esta inativo."
+        )
+
+    # 5. Se for saída, verificar saldo
     if tipo == TipoMovimentacao.SAIDA:
         saldo_atual = calcular_saldo(session, item_id)
         if saldo_atual < quantidade:
@@ -379,6 +561,7 @@ def registrar_movimentacao(
     # Tudo validado — cria e grava a movimentação
     mov = Movimentacao(
         item_id=item_id,
+        usuario_id=usuario.id,
         tipo=tipo,
         quantidade=quantidade,
         motivo=motivo,
@@ -399,13 +582,14 @@ def listar_movimentacoes(session: Session, item_id: int) -> list[Movimentacao]:
         item_id: id do item.
 
     Returns:
-        Lista de objetos Movimentacao.
+        Lista de objetos Movimentacao com o usuário responsável carregado em mov.usuario.
     """
     # Garante que o item existe antes de puxar histórico
     buscar_item_por_id(session, item_id)
 
     return (
         session.query(Movimentacao)
+        .options(joinedload(Movimentacao.usuario))
         .filter(Movimentacao.item_id == item_id)
         .order_by(Movimentacao.criado_em.asc())
         .all()

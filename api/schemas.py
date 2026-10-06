@@ -6,8 +6,35 @@ das respostas, sem expor os models do SQLAlchemy diretamente.
 """
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
-from models import TipoMovimentacao, MotivoMovimentacao
+from pydantic import AliasPath, BaseModel, ConfigDict, Field
+from models import TipoMovimentacao, MotivoMovimentacao, PapelUsuario
+
+
+# --- Schemas de Usuário ------------------------------------------------------
+
+class UsuarioCriar(BaseModel):
+    """Dados recebidos para cadastrar usuário; senha nunca é devolvida."""
+    nome: str = Field(..., description="Nome do usuário")
+    login: str = Field(..., description="Login (normalizado pela camada de serviço)")
+    senha: str = Field(..., min_length=8, max_length=128, description="Senha de 8 a 128 caracteres")
+    papel: PapelUsuario = Field(..., description="ADMINISTRADOR, ESTOQUISTA ou COZINHA")
+
+
+class UsuarioMudarPapel(BaseModel):
+    """Novo papel do usuário."""
+    papel: PapelUsuario
+
+
+class UsuarioResposta(BaseModel):
+    """Campos públicos do usuário; senha_hash é deliberadamente omitido."""
+    id: int
+    nome: str
+    login: str
+    papel: PapelUsuario
+    ativo: bool
+    criado_em: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Schemas de Item ---------------------------------------------------------
@@ -52,17 +79,23 @@ class ItemAlertaResposta(BaseModel):
 # --- Schemas de Movimentação -------------------------------------------------
 
 class MovimentacaoCriar(BaseModel):
-    """Payload de entrada para registrar movimentação."""
+    """Payload de movimentação; usuario_id é provisório até a Etapa 3."""
     item_id: int = Field(..., gt=0, description="ID do item")
+    usuario_id: int = Field(
+        ...,
+        gt=0,
+        description="ID do usuário responsável (provisório até a autenticação da Etapa 3)",
+    )
     tipo: TipoMovimentacao = Field(..., description="ENTRADA ou SAIDA")
     quantidade: int = Field(..., gt=0, description="Quantidade estritamente positiva na menor unidade")
     motivo: MotivoMovimentacao = Field(..., description="Motivo (COMPRA, USO, PERDA, VENCIMENTO)")
 
 
 class MovimentacaoResposta(BaseModel):
-    """Representação de uma movimentação registrada."""
+    """Movimentação registrada, incluindo o nome de quem a lançou."""
     id: int
     item_id: int
+    usuario_nome: str = Field(validation_alias=AliasPath("usuario", "nome"))
     tipo: TipoMovimentacao
     quantidade: int
     motivo: MotivoMovimentacao
