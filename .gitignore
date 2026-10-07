@@ -1,3 +1,6 @@
+# Segredos e configurações locais
+.env
+
 # Banco de dados local (dados de teste / ambiente local)
 *.db
 *.sqlite3

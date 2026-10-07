@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from config import COOKIE_SECURE, SECRET_KEY, SESSION_TTL_MINUTES
 from db import criar_tabelas
 from erros import (
     EstoqueError,

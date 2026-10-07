@@ -69,10 +69,47 @@ class Usuario(Base):
     )
 
     movimentacoes = relationship("Movimentacao", back_populates="usuario")
+    sessoes = relationship("Sessao", back_populates="usuario")
 
     def __repr__(self) -> str:
         status = "ativo" if self.ativo else "inativo"
         return f"Usuario(id={self.id}, login='{self.login}', papel={self.papel.value}, {status})"
+
+
+class Sessao(Base):
+    """Representa uma sessão autenticada do usuário no sistema."""
+
+    __tablename__ = "sessoes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token_hash = Column(String(128), nullable=False, unique=True, index=True)
+    usuario_id = Column(
+        Integer,
+        ForeignKey("usuarios.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    criado_em = Column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    expira_em = Column(
+        DateTime,
+        nullable=False,
+    )
+    revogada_em = Column(
+        DateTime,
+        nullable=True,
+        default=None,
+    )
+
+    usuario = relationship("Usuario", back_populates="sessoes")
+
+    def __repr__(self) -> str:
+        return (
+            f"Sessao(id={self.id}, usuario_id={self.usuario_id}, "
+            f"expira_em={self.expira_em.isoformat() if self.expira_em else None})"
+        )
 
 
 # --- Modelo: Item ------------------------------------------------------------
