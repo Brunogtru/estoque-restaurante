@@ -20,6 +20,12 @@ class UsuarioCriar(BaseModel):
     papel: PapelUsuario = Field(..., description="ADMINISTRADOR, ESTOQUISTA ou COZINHA")
 
 
+class LoginCredenciais(BaseModel):
+    """Credenciais de acesso para autenticação do usuário."""
+    login: str = Field(..., description="Login do usuário")
+    senha: str = Field(..., description="Senha do usuário")
+
+
 class UsuarioMudarPapel(BaseModel):
     """Novo papel do usuário."""
     papel: PapelUsuario
