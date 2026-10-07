@@ -5,14 +5,18 @@ Cada função recebe uma Session como primeiro parâmetro (injeção de dependê
 Nunca faz print() nem input() — apenas retorna dados ou lança exceções de erros.py.
 """
 
+from datetime import datetime, timezone
+
 # pyrefly: ignore [missing-import]
 from sqlalchemy import case, func
 # pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session, joinedload
 from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
 from erros import (
     AlteracaoUnidadeProibidaError,
+    CredenciaisInvalidasError,
     EstoqueInsuficienteError,
     EstoqueMinimoInvalidoError,
     ItemInativoError,
@@ -30,6 +34,7 @@ from erros import (
 from models import (
     Item,
     Movimentacao,
+    Sessao,
     TipoMovimentacao,
     MotivoMovimentacao,
     PapelUsuario,
@@ -37,6 +42,7 @@ from models import (
 )
 
 _password_hasher = PasswordHasher()
+_HASH_FALSO = _password_hasher.hash("senha_falsa_qualquer_que_nao_sera_usada_em_producao")
 
 UNIDADES_VALIDAS = ("g", "ml", "un")
 
@@ -66,6 +72,39 @@ def _validar_senha(senha: str) -> None:
         raise SenhaInvalidaError("A senha deve ter no minimo 8 caracteres.")
     if len(senha) > 128:
         raise SenhaInvalidaError("A senha deve ter no maximo 128 caracteres.")
+
+
+def autenticar_usuario(session: Session, login: str, senha: str) -> Usuario:
+    """Valida login e senha, retornando o usuario autenticado ou levantando CredenciaisInvalidasError."""
+    login_normalizado = _normalizar_login(login)
+    if not login_normalizado:
+        raise CredenciaisInvalidasError("Credenciais invalidas.")
+
+    if not isinstance(senha, str) or not senha.strip():
+        raise CredenciaisInvalidasError("Credenciais invalidas.")
+
+    usuario = (
+        session.query(Usuario)
+        .filter(Usuario.login == login_normalizado)
+        .first()
+    )
+
+    hash_para_verificar = _HASH_FALSO
+    if usuario is not None:
+        hash_para_verificar = usuario.senha_hash
+
+    try:
+        _password_hasher.verify(hash_para_verificar, senha)
+    except (VerifyMismatchError, InvalidHashError):
+        raise CredenciaisInvalidasError("Credenciais invalidas.") from None
+
+    if usuario is None:
+        raise CredenciaisInvalidasError("Credenciais invalidas.")
+
+    if not usuario.ativo:
+        raise CredenciaisInvalidasError("Credenciais invalidas.")
+
+    return usuario
 
 
 def cadastrar_usuario(
@@ -191,10 +230,17 @@ def mudar_papel_usuario(
 
 
 def desativar_usuario(session: Session, usuario_id: int) -> Usuario:
-    """Desativa usuário, preservando o último administrador ativo."""
+    """Desativa usuário, preservando o último administrador ativo e revogando suas sessões."""
     usuario = buscar_usuario_por_id(session, usuario_id)
     _validar_nao_ser_ultimo_administrador(session, usuario)
     usuario.ativo = False
+
+    agora = datetime.now(timezone.utc)
+    session.query(Sessao).filter(
+        Sessao.usuario_id == usuario_id,
+        Sessao.revogada_em.is_(None),
+    ).update({Sessao.revogada_em: agora})
+
     session.commit()
     session.refresh(usuario)
     return usuario
