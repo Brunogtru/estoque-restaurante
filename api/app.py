@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from config import COOKIE_SECURE, SECRET_KEY, SESSION_TTL_MINUTES
 from db import criar_tabelas
 from erros import (
+    CredenciaisInvalidasError,
     EstoqueError,
     ItemNaoEncontradoError,
     NomeInvalidoError,
@@ -19,11 +20,11 @@ from erros import (
     ItemInativoError,
     MotivoIncompativelError,
     AlteracaoUnidadeProibidaError,
-        LoginDuplicadoError,
-        SenhaInvalidaError,
-        UsuarioNaoEncontradoError,
-        UsuarioInativoError,
-        UltimoAdministradorError,
+    LoginDuplicadoError,
+    SenhaInvalidaError,
+    UsuarioNaoEncontradoError,
+    UsuarioInativoError,
+    UltimoAdministradorError,
 )
 from api.rotas.itens import router as router_itens
 from api.rotas.movimentacoes import router as router_movimentacoes
@@ -49,6 +50,9 @@ app = FastAPI(
 
 # --- Mapeamento central de exceções de domínio para HTTP ----------------------
 STATUS_POR_EXCECAO = {
+    # 401 Unauthorized: credenciais invalidas ou ausentes
+    CredenciaisInvalidasError: status.HTTP_401_UNAUTHORIZED,
+
     # 404 Not Found: recurso inexistente
     ItemNaoEncontradoError: status.HTTP_404_NOT_FOUND,
     UsuarioNaoEncontradoError: status.HTTP_404_NOT_FOUND,

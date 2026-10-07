@@ -85,4 +85,9 @@ class UltimoAdministradorError(EstoqueError):
     pass
 
 
+class CredenciaisInvalidasError(EstoqueError):
+    """As credenciais informadas nao sao validas para o login."""
+    pass
+
+
 
