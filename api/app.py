@@ -3,6 +3,8 @@ api/app.py — Aplicação FastAPI principal e tratador de erros central.
 """
 
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
+
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
@@ -47,6 +49,37 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+METODOS_MUTAVEIS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def validar_origem_requisicao(request: Request, call_next):
+    """Rejeita requisições mutáveis sem Origin da própria origem da API."""
+    if request.method in METODOS_MUTAVEIS:
+        origem = request.headers.get("origin")
+        origem_esperada = f"{request.url.scheme}://{request.url.netloc}"
+
+        if not origem or origem == "null" or origem.rstrip("/") != origem_esperada:
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={
+                    "erro": "OrigemInvalidaError",
+                    "mensagem": "Origem ausente ou nao permitida.",
+                },
+            )
+
+        origem_parseada = urlsplit(origem)
+        if origem_parseada.path or origem_parseada.query or origem_parseada.fragment:
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={
+                    "erro": "OrigemInvalidaError",
+                    "mensagem": "Origem ausente ou nao permitida.",
+                },
+            )
+
+    return await call_next(request)
 
 
 # --- Mapeamento central de exceções de domínio para HTTP ----------------------
