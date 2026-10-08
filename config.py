@@ -56,5 +56,14 @@ def _parse_cookie_secure(value: str) -> bool:
 
 
 SECRET_KEY = _require_env("SECRET_KEY")
+if SECRET_KEY == "troque-por-uma-chave-forte-aleatoria":
+    raise ValueError(
+        "SECRET_KEY ainda esta com o valor de exemplo. Configure uma chave aleatoria no arquivo .env."
+    )
+if len(SECRET_KEY) < 32:
+    raise ValueError(
+        "SECRET_KEY deve ter pelo menos 32 caracteres. Gere uma chave aleatoria forte para o .env."
+    )
+
 SESSION_TTL_MINUTES = _parse_session_ttl(os.getenv("SESSION_TTL_MINUTES", "480"))
 COOKIE_SECURE = _parse_cookie_secure(os.getenv("COOKIE_SECURE", "false"))
