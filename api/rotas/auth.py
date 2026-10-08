@@ -5,7 +5,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Request, Response, status
-from itsdangerous import URLSafeSerializer
+from itsdangerous import BadSignature, URLSafeSerializer
 from sqlalchemy.orm import Session
 
 from api.dependencias import get_current_user, get_db
@@ -29,9 +29,14 @@ def login(
 ):
     """Autentica o usuário e cria uma sessão segura em cookie HttpOnly."""
     usuario = autenticar_usuario(session, dados.login, dados.senha)
+    agora = datetime.now(timezone.utc)
+    session.query(Sessao).filter(Sessao.expira_em <= agora).delete(
+        synchronize_session="fetch",
+    )
+
     token_plano = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(token_plano.encode("utf-8")).hexdigest()
-    expira_em = datetime.now(timezone.utc) + timedelta(minutes=SESSION_TTL_MINUTES)
+    expira_em = agora + timedelta(minutes=SESSION_TTL_MINUTES)
 
     sessao = Sessao(
         token_hash=token_hash,
@@ -66,6 +71,10 @@ def logout(
     if valor_cookie:
         try:
             token_plano = _serializer().loads(valor_cookie)
+        except BadSignature:
+            token_plano = None
+
+        if isinstance(token_plano, str):
             token_hash = hashlib.sha256(token_plano.encode("utf-8")).hexdigest()
             agora = datetime.now(timezone.utc)
             session.query(Sessao).filter(
@@ -73,10 +82,14 @@ def logout(
                 Sessao.revogada_em.is_(None),
             ).update({Sessao.revogada_em: agora})
             session.commit()
-        except Exception:
-            pass
 
-    response.delete_cookie(key="session", path="/")
+    response.delete_cookie(
+        key="session",
+        path="/",
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+    )
     return {"mensagem": "logout realizado"}
 
 
