@@ -5,6 +5,7 @@ Cada função recebe uma Session como primeiro parâmetro (injeção de dependê
 Nunca faz print() nem input() — apenas retorna dados ou lança exceções de erros.py.
 """
 
+import enum
 from datetime import datetime, timezone
 
 # pyrefly: ignore [missing-import]
@@ -24,6 +25,7 @@ from erros import (
     LoginDuplicadoError,
     MotivoIncompativelError,
     NomeInvalidoError,
+    PermissaoNegadaError,
     QuantidadeInvalidaError,
     SenhaInvalidaError,
     UnidadeInvalidaError,
@@ -45,6 +47,51 @@ _password_hasher = PasswordHasher()
 _HASH_FALSO = _password_hasher.hash("senha_falsa_qualquer_que_nao_sera_usada_em_producao")
 
 UNIDADES_VALIDAS = ("g", "ml", "un")
+
+
+class Permissao(enum.Enum):
+    """Acoes protegidas pela camada de negocio."""
+
+    CONSULTAR_ESTOQUE = "consultar_estoque"
+    REGISTRAR_ENTRADA_COMPRA = "registrar_entrada_compra"
+    REGISTRAR_SAIDA_USO = "registrar_saida_uso"
+    REGISTRAR_SAIDA_PERDA_VENCIMENTO = "registrar_saida_perda_vencimento"
+    CADASTRAR_ITEM = "cadastrar_item"
+    EDITAR_ITEM = "editar_item"
+    DESATIVAR_ITEM = "desativar_item"
+    REATIVAR_ITEM = "reativar_item"
+    GERENCIAR_USUARIOS = "gerenciar_usuarios"
+
+
+PERMISSOES_POR_PAPEL = {
+    PapelUsuario.ADMINISTRADOR: frozenset(Permissao),
+    PapelUsuario.ESTOQUISTA: frozenset(
+        {
+            Permissao.CONSULTAR_ESTOQUE,
+            Permissao.REGISTRAR_ENTRADA_COMPRA,
+            Permissao.REGISTRAR_SAIDA_USO,
+            Permissao.REGISTRAR_SAIDA_PERDA_VENCIMENTO,
+            Permissao.CADASTRAR_ITEM,
+            Permissao.EDITAR_ITEM,
+        }
+    ),
+    PapelUsuario.COZINHA: frozenset(
+        {
+            Permissao.CONSULTAR_ESTOQUE,
+            Permissao.REGISTRAR_SAIDA_USO,
+        }
+    ),
+}
+
+
+def _exigir_permissao(usuario_executor: Usuario, permissao: Permissao) -> None:
+    """Garante que o executor ativo tenha a permissao solicitada."""
+    if not usuario_executor.ativo:
+        raise PermissaoNegadaError("Voce nao tem permissao para esta acao.")
+
+    permissoes = PERMISSOES_POR_PAPEL.get(usuario_executor.papel, frozenset())
+    if permissao not in permissoes:
+        raise PermissaoNegadaError("Voce nao tem permissao para esta acao.")
 
 # Mapeamento estrito: cada Tipo só aceita seu conjunto de Motivos
 MOTIVOS_POR_TIPO = {
@@ -290,6 +337,7 @@ def _validar_dados_item(nome: str, unidade: str, estoque_minimo: int) -> tuple[s
 
 def cadastrar_item(
     session: Session,
+    usuario_executor: Usuario,
     nome: str,
     unidade: str,
     estoque_minimo: int = 0,
@@ -297,6 +345,7 @@ def cadastrar_item(
     """
     Cria um novo item no estoque, validando regras antes da inserção.
     """
+    _exigir_permissao(usuario_executor, Permissao.CADASTRAR_ITEM)
     nome_limpo, unidade_limpa = _validar_dados_item(nome, unidade, estoque_minimo)
 
     item = Item(
@@ -312,6 +361,7 @@ def cadastrar_item(
 
 def editar_item(
     session: Session,
+    usuario_executor: Usuario,
     item_id: int,
     nome: str,
     unidade: str,
@@ -334,6 +384,8 @@ def editar_item(
         EstoqueMinimoInvalidoError: se estoque_minimo for negativo.
         AlteracaoUnidadeProibidaError: se tentar mudar a unidade com movimentações já existentes.
     """
+    _exigir_permissao(usuario_executor, Permissao.EDITAR_ITEM)
+
     # 1. Item existe?
     item = buscar_item_por_id(session, item_id)
 
@@ -455,7 +507,11 @@ def buscar_item_por_id(session: Session, item_id: int) -> Item:
     return item
 
 
-def desativar_item(session: Session, item_id: int) -> Item:
+def desativar_item(
+    session: Session,
+    usuario_executor: Usuario,
+    item_id: int,
+) -> Item:
     """
     Marca um item como inativo (soft delete).
 
@@ -465,6 +521,7 @@ def desativar_item(session: Session, item_id: int) -> Item:
     Raises:
         ItemNaoEncontradoError: se o item_id não existe.
     """
+    _exigir_permissao(usuario_executor, Permissao.DESATIVAR_ITEM)
     item = buscar_item_por_id(session, item_id)
     item.ativo = False
     session.commit()
@@ -472,13 +529,18 @@ def desativar_item(session: Session, item_id: int) -> Item:
     return item
 
 
-def reativar_item(session: Session, item_id: int) -> Item:
+def reativar_item(
+    session: Session,
+    usuario_executor: Usuario,
+    item_id: int,
+) -> Item:
     """
     Reativa um item que foi desativado.
 
     Raises:
         ItemNaoEncontradoError: se o item_id não existe.
     """
+    _exigir_permissao(usuario_executor, Permissao.REATIVAR_ITEM)
     item = buscar_item_por_id(session, item_id)
     item.ativo = True
     session.commit()

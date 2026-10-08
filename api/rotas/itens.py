@@ -5,7 +5,7 @@ api/rotas/itens.py — Rotas HTTP para operações sobre itens do estoque.
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from api.dependencias import get_db
+from api.dependencias import get_current_user, get_db
 from api.schemas import (
     ItemCriar,
     ItemEditar,
@@ -16,12 +16,14 @@ from api.schemas import (
     MovimentacaoResposta,
 )
 import services
+from models import Usuario
 
 router = APIRouter(prefix="/itens", tags=["Itens"])
 
 
 @router.get("", response_model=list[ItemComSaldoResposta])
 def listar_todos_os_itens(
+    usuario_logado: Usuario = Depends(get_current_user),
     apenas_ativos: bool = True,
     session: Session = Depends(get_db),
 ):
@@ -49,6 +51,7 @@ def listar_todos_os_itens(
 @router.post("", response_model=ItemResposta, status_code=status.HTTP_201_CREATED)
 def cadastrar_item(
     dados: ItemCriar,
+    usuario_executor: Usuario = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
     """
@@ -57,6 +60,7 @@ def cadastrar_item(
     """
     return services.cadastrar_item(
         session=session,
+        usuario_executor=usuario_executor,
         nome=dados.nome,
         unidade=dados.unidade,
         estoque_minimo=dados.estoque_minimo,
@@ -65,6 +69,7 @@ def cadastrar_item(
 
 @router.get("/abaixo-do-minimo", response_model=list[ItemAlertaResposta])
 def relatorio_itens_abaixo_do_minimo(
+    usuario_logado: Usuario = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
     """
@@ -85,6 +90,7 @@ def relatorio_itens_abaixo_do_minimo(
 @router.get("/{item_id}", response_model=ItemComSaldoResposta)
 def buscar_item_por_id(
     item_id: int,
+    usuario_logado: Usuario = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
     """Busca um item pelo seu ID e retorna com seu saldo atual."""
@@ -104,6 +110,7 @@ def buscar_item_por_id(
 def editar_item(
     item_id: int,
     dados: ItemEditar,
+    usuario_executor: Usuario = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
     """
@@ -112,6 +119,7 @@ def editar_item(
     """
     return services.editar_item(
         session=session,
+        usuario_executor=usuario_executor,
         item_id=item_id,
         nome=dados.nome,
         unidade=dados.unidade,
@@ -122,24 +130,27 @@ def editar_item(
 @router.patch("/{item_id}/desativar", response_model=ItemResposta)
 def desativar_item(
     item_id: int,
+    usuario_executor: Usuario = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
     """Desativa um item (soft delete), impedindo novas movimentações."""
-    return services.desativar_item(session, item_id)
+    return services.desativar_item(session, usuario_executor, item_id)
 
 
 @router.patch("/{item_id}/reativar", response_model=ItemResposta)
 def reativar_item(
     item_id: int,
+    usuario_executor: Usuario = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
     """Reativa um item previamente desativado."""
-    return services.reativar_item(session, item_id)
+    return services.reativar_item(session, usuario_executor, item_id)
 
 
 @router.get("/{item_id}/saldo", response_model=SaldoResposta)
 def consultar_saldo_item(
     item_id: int,
+    usuario_logado: Usuario = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
     """Retorna apenas o saldo numérico atual calculado para um item."""
@@ -152,6 +163,7 @@ def consultar_saldo_item(
 @router.get("/{item_id}/extrato", response_model=list[MovimentacaoResposta])
 def consultar_extrato_item(
     item_id: int,
+    usuario_logado: Usuario = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
     """Retorna o histórico cronológico completo de movimentações de um item."""

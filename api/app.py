@@ -23,6 +23,7 @@ from erros import (
     MotivoIncompativelError,
     AlteracaoUnidadeProibidaError,
     LoginDuplicadoError,
+    PermissaoNegadaError,
     SenhaInvalidaError,
     UsuarioNaoEncontradoError,
     UsuarioInativoError,
@@ -86,6 +87,9 @@ async def validar_origem_requisicao(request: Request, call_next):
 STATUS_POR_EXCECAO = {
     # 401 Unauthorized: credenciais invalidas ou ausentes
     CredenciaisInvalidasError: status.HTTP_401_UNAUTHORIZED,
+
+    # 403 Forbidden: usuario autenticado sem permissao para a acao
+    PermissaoNegadaError: status.HTTP_403_FORBIDDEN,
 
     # 404 Not Found: recurso inexistente
     ItemNaoEncontradoError: status.HTTP_404_NOT_FOUND,

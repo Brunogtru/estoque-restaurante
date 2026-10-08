@@ -90,4 +90,9 @@ class CredenciaisInvalidasError(EstoqueError):
     pass
 
 
+class PermissaoNegadaError(EstoqueError):
+    """O usuario autenticado nao pode executar esta acao."""
+    pass
+
+
 
