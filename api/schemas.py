@@ -85,16 +85,13 @@ class ItemAlertaResposta(BaseModel):
 # --- Schemas de Movimentação -------------------------------------------------
 
 class MovimentacaoCriar(BaseModel):
-    """Payload de movimentação; usuario_id é provisório até a Etapa 3."""
+    """Payload de movimentação; o responsável vem do usuário autenticado."""
     item_id: int = Field(..., gt=0, description="ID do item")
-    usuario_id: int = Field(
-        ...,
-        gt=0,
-        description="ID do usuário responsável (provisório até a autenticação da Etapa 3)",
-    )
     tipo: TipoMovimentacao = Field(..., description="ENTRADA ou SAIDA")
     quantidade: int = Field(..., gt=0, description="Quantidade estritamente positiva na menor unidade")
     motivo: MotivoMovimentacao = Field(..., description="Motivo (COMPRA, USO, PERDA, VENCIMENTO)")
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class MovimentacaoResposta(BaseModel):

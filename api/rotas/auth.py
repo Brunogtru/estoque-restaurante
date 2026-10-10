@@ -13,7 +13,7 @@ from api.schemas import LoginCredenciais, UsuarioResposta
 from config import COOKIE_SECURE, SECRET_KEY, SESSION_TTL_MINUTES
 from erros import CredenciaisInvalidasError
 from models import Sessao, Usuario
-from services import autenticar_usuario
+from services import autenticar_usuario, limpar_sessoes_expiradas
 
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
 
@@ -30,9 +30,7 @@ def login(
     """Autentica o usuário e cria uma sessão segura em cookie HttpOnly."""
     usuario = autenticar_usuario(session, dados.login, dados.senha)
     agora = datetime.now(timezone.utc)
-    session.query(Sessao).filter(Sessao.expira_em <= agora).delete(
-        synchronize_session="fetch",
-    )
+    limpar_sessoes_expiradas(session, agora)
 
     token_plano = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(token_plano.encode("utf-8")).hexdigest()
