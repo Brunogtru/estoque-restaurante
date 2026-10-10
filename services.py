@@ -16,6 +16,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
 from erros import (
+    AdministradorJaExisteError,
     AlteracaoUnidadeProibidaError,
     CredenciaisInvalidasError,
     EstoqueInsuficienteError,
@@ -93,6 +94,25 @@ def _exigir_permissao(usuario_executor: Usuario, permissao: Permissao) -> None:
     if permissao not in permissoes:
         raise PermissaoNegadaError("Voce nao tem permissao para esta acao.")
 
+
+def _exigir_permissao_movimentacao(
+    usuario_executor: Usuario,
+    permissao: Permissao | None,
+) -> None:
+    """Autoriza o par tipo/motivo conhecido e sempre rejeita executor inativo."""
+    if not usuario_executor.ativo:
+        raise PermissaoNegadaError("Voce nao tem permissao para esta acao.")
+    if permissao is not None:
+        _exigir_permissao(usuario_executor, permissao)
+
+
+PERMISSAO_POR_MOVIMENTACAO = {
+    (TipoMovimentacao.ENTRADA, MotivoMovimentacao.COMPRA): Permissao.REGISTRAR_ENTRADA_COMPRA,
+    (TipoMovimentacao.SAIDA, MotivoMovimentacao.USO): Permissao.REGISTRAR_SAIDA_USO,
+    (TipoMovimentacao.SAIDA, MotivoMovimentacao.PERDA): Permissao.REGISTRAR_SAIDA_PERDA_VENCIMENTO,
+    (TipoMovimentacao.SAIDA, MotivoMovimentacao.VENCIMENTO): Permissao.REGISTRAR_SAIDA_PERDA_VENCIMENTO,
+}
+
 # Mapeamento estrito: cada Tipo só aceita seu conjunto de Motivos
 MOTIVOS_POR_TIPO = {
     TipoMovimentacao.ENTRADA: {MotivoMovimentacao.COMPRA},
@@ -130,11 +150,7 @@ def autenticar_usuario(session: Session, login: str, senha: str) -> Usuario:
     if not isinstance(senha, str) or not senha.strip():
         raise CredenciaisInvalidasError("Credenciais invalidas.")
 
-    usuario = (
-        session.query(Usuario)
-        .filter(Usuario.login == login_normalizado)
-        .first()
-    )
+    usuario = _buscar_usuario_por_login(session, login_normalizado)
 
     hash_para_verificar = _HASH_FALSO
     if usuario is not None:
@@ -154,14 +170,22 @@ def autenticar_usuario(session: Session, login: str, senha: str) -> Usuario:
     return usuario
 
 
-def cadastrar_usuario(
+def limpar_sessoes_expiradas(session: Session, agora: datetime | None = None) -> int:
+    """Remove sessoes vencidas e retorna a quantidade removida."""
+    instante = agora or datetime.now(timezone.utc)
+    return session.query(Sessao).filter(Sessao.expira_em <= instante).delete(
+        synchronize_session="fetch",
+    )
+
+
+def _criar_usuario(
     session: Session,
     nome: str,
     login: str,
     senha: str,
     papel: PapelUsuario,
 ) -> Usuario:
-    """Cadastra usuário sem checagem de permissão, inclusive para bootstrap do admin."""
+    """Cria usuario sem checagem de permissao; uso interno."""
     nome_limpo = nome.strip() if isinstance(nome, str) else ""
     if not nome_limpo:
         raise NomeInvalidoError("Nome do usuario nao pode ser vazio.")
@@ -195,8 +219,44 @@ def cadastrar_usuario(
     return usuario
 
 
-def listar_usuarios(session: Session, apenas_ativos: bool = True) -> list[Usuario]:
+def criar_primeiro_administrador(
+    session: Session,
+    nome: str,
+    login: str,
+    senha: str,
+) -> Usuario:
+    """Cria o administrador inicial ou falha se ja houver um ativo."""
+    if existe_administrador_ativo(session):
+        raise AdministradorJaExisteError("Ja existe um administrador ativo.")
+    return _criar_usuario(
+        session=session,
+        nome=nome,
+        login=login,
+        senha=senha,
+        papel=PapelUsuario.ADMINISTRADOR,
+    )
+
+
+def cadastrar_usuario(
+    session: Session,
+    usuario_executor: Usuario,
+    nome: str,
+    login: str,
+    senha: str,
+    papel: PapelUsuario,
+) -> Usuario:
+    """Cadastra usuario pela API, exigindo permissao administrativa."""
+    _exigir_permissao(usuario_executor, Permissao.GERENCIAR_USUARIOS)
+    return _criar_usuario(session, nome, login, senha, papel)
+
+
+def listar_usuarios(
+    session: Session,
+    usuario_executor: Usuario,
+    apenas_ativos: bool = True,
+) -> list[Usuario]:
     """Lista usuários por nome, ativos por padrão."""
+    _exigir_permissao(usuario_executor, Permissao.GERENCIAR_USUARIOS)
     query = session.query(Usuario)
     if apenas_ativos:
         query = query.filter(Usuario.ativo == True)
@@ -216,27 +276,32 @@ def existe_administrador_ativo(session: Session) -> bool:
     )
 
 
-def buscar_usuario_por_id(session: Session, usuario_id: int) -> Usuario:
-    """Busca usuário pelo ID ou lança UsuarioNaoEncontradoError."""
+def _buscar_usuario_por_id(session: Session, usuario_id: int) -> Usuario:
+    """Busca usuario por id para uso interno dos servicos."""
     usuario = session.get(Usuario, usuario_id)
     if usuario is None:
         raise UsuarioNaoEncontradoError(f"Usuario com id={usuario_id} nao encontrado.")
     return usuario
 
 
-def buscar_usuario_por_login(session: Session, login: str) -> Usuario:
-    """Busca usuário pelo login normalizado ou lança UsuarioNaoEncontradoError."""
+def buscar_usuario_por_id(
+    session: Session,
+    usuario_executor: Usuario,
+    usuario_id: int,
+) -> Usuario:
+    """Busca usuario por id, restrito a administradores."""
+    _exigir_permissao(usuario_executor, Permissao.GERENCIAR_USUARIOS)
+    return _buscar_usuario_por_id(session, usuario_id)
+
+
+def _buscar_usuario_por_login(session: Session, login: str) -> Usuario | None:
+    """Busca usuario por login normalizado para uso interno da autenticacao."""
     login_normalizado = _normalizar_login(login)
-    usuario = (
+    return (
         session.query(Usuario)
         .filter(Usuario.login == login_normalizado)
         .first()
     )
-    if usuario is None:
-        raise UsuarioNaoEncontradoError(
-            f"Usuario com login '{login_normalizado}' nao encontrado."
-        )
-    return usuario
 
 
 def _validar_nao_ser_ultimo_administrador(
@@ -263,11 +328,13 @@ def _validar_nao_ser_ultimo_administrador(
 
 def mudar_papel_usuario(
     session: Session,
+    usuario_executor: Usuario,
     usuario_id: int,
     novo_papel: PapelUsuario,
 ) -> Usuario:
     """Atualiza o papel sem permitir rebaixar o último administrador ativo."""
-    usuario = buscar_usuario_por_id(session, usuario_id)
+    _exigir_permissao(usuario_executor, Permissao.GERENCIAR_USUARIOS)
+    usuario = _buscar_usuario_por_id(session, usuario_id)
     if novo_papel != PapelUsuario.ADMINISTRADOR:
         _validar_nao_ser_ultimo_administrador(session, usuario)
     usuario.papel = novo_papel
@@ -276,9 +343,14 @@ def mudar_papel_usuario(
     return usuario
 
 
-def desativar_usuario(session: Session, usuario_id: int) -> Usuario:
+def desativar_usuario(
+    session: Session,
+    usuario_executor: Usuario,
+    usuario_id: int,
+) -> Usuario:
     """Desativa usuário, preservando o último administrador ativo e revogando suas sessões."""
-    usuario = buscar_usuario_por_id(session, usuario_id)
+    _exigir_permissao(usuario_executor, Permissao.GERENCIAR_USUARIOS)
+    usuario = _buscar_usuario_por_id(session, usuario_id)
     _validar_nao_ser_ultimo_administrador(session, usuario)
     usuario.ativo = False
 
@@ -293,9 +365,14 @@ def desativar_usuario(session: Session, usuario_id: int) -> Usuario:
     return usuario
 
 
-def reativar_usuario(session: Session, usuario_id: int) -> Usuario:
+def reativar_usuario(
+    session: Session,
+    usuario_executor: Usuario,
+    usuario_id: int,
+) -> Usuario:
     """Reativa usuário previamente desativado."""
-    usuario = buscar_usuario_por_id(session, usuario_id)
+    _exigir_permissao(usuario_executor, Permissao.GERENCIAR_USUARIOS)
+    usuario = _buscar_usuario_por_id(session, usuario_id)
     usuario.ativo = True
     session.commit()
     session.refresh(usuario)
@@ -589,8 +666,8 @@ def calcular_saldo(session: Session, item_id: int) -> int:
 
 def registrar_movimentacao(
     session: Session,
+    usuario_executor: Usuario,
     item_id: int,
-    usuario_id: int,
     tipo: TipoMovimentacao,
     quantidade: int,
     motivo: MotivoMovimentacao,
@@ -599,10 +676,10 @@ def registrar_movimentacao(
     Registra uma entrada ou saída no estoque, após validar todas as regras.
 
     Ordem das validações:
-    1. Quantidade deve ser > 0
-    2. Motivo deve ser compatível com o tipo (ENTRADA só COMPRA; SAIDA só USO/PERDA/VENCIMENTO)
-    3. Item deve existir e estar ativo
-    4. Usuário deve existir e estar ativo
+    1. Permissao e executor ativo
+    2. Quantidade deve ser > 0
+    3. Motivo deve ser compatível com o tipo
+    4. Item deve existir e estar ativo
     5. Se for SAIDA, saldo não pode ficar negativo
 
     Se qualquer validação falhar, lança exceção e nada é gravado.
@@ -610,7 +687,7 @@ def registrar_movimentacao(
     Args:
         session: sessão do banco.
         item_id: id do item.
-        usuario_id: id do usuário responsável pela movimentação.
+        usuario_executor: usuário autenticado responsável pela movimentação.
         tipo: TipoMovimentacao.ENTRADA ou TipoMovimentacao.SAIDA.
         quantidade: valor positivo na menor unidade.
         motivo: MotivoMovimentacao (COMPRA, USO, PERDA, VENCIMENTO).
@@ -623,10 +700,11 @@ def registrar_movimentacao(
         MotivoIncompativelError: se motivo não é permitido para o tipo.
         ItemNaoEncontradoError: se item_id não existe.
         ItemInativoError: se item está desativado.
-        UsuarioNaoEncontradoError: se usuario_id não existe.
-        UsuarioInativoError: se o usuário está desativado.
         EstoqueInsuficienteError: se saída deixaria saldo negativo.
     """
+    permissao = PERMISSAO_POR_MOVIMENTACAO.get((tipo, motivo))
+    _exigir_permissao_movimentacao(usuario_executor, permissao)
+
     # 1. Quantidade positiva
     if quantidade <= 0:
         raise QuantidadeInvalidaError(
@@ -649,14 +727,7 @@ def registrar_movimentacao(
             f"Item '{item.nome}' (id={item.id}) esta inativo."
         )
 
-    # 4. Usuário existe e está ativo?
-    usuario = buscar_usuario_por_id(session, usuario_id)
-    if not usuario.ativo:
-        raise UsuarioInativoError(
-            f"Usuario '{usuario.login}' (id={usuario.id}) esta inativo."
-        )
-
-    # 5. Se for saída, verificar saldo
+    # 4. Se for saída, verificar saldo
     if tipo == TipoMovimentacao.SAIDA:
         saldo_atual = calcular_saldo(session, item_id)
         if saldo_atual < quantidade:
@@ -669,7 +740,7 @@ def registrar_movimentacao(
     # Tudo validado — cria e grava a movimentação
     mov = Movimentacao(
         item_id=item_id,
-        usuario_id=usuario.id,
+        usuario_id=usuario_executor.id,
         tipo=tipo,
         quantidade=quantidade,
         motivo=motivo,
