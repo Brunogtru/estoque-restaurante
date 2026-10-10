@@ -10,6 +10,7 @@ Sistema local em Python para controle rigoroso de estoque, projetado com **arqui
 - **API Web:** FastAPI + Pydantic v2
 - **Servidor ASGI:** Uvicorn
 - **Interface ativa:** Web API (FastAPI / Swagger)
+- **Autenticação:** cookie HttpOnly assinado e sessão persistida no SQLite
 
 ---
 
@@ -32,7 +33,7 @@ Sistema local em Python para controle rigoroso de estoque, projetado com **arqui
    - `services.py`: **100% da lógica de negócio e validações**. Não usa `print`, `input` nem detalhes de HTTP.
    - `api/schemas.py`: Contratos Pydantic de entrada e saída (DTOs), prevenindo ataques de Mass Assignment.
    - `api/rotas/`: Apenas traduzem requisições HTTP, chamam o `services.py` e devolvem JSON.
-   - `api/app.py`: Tratador de erros central que converte exceções de domínio em status HTTP semânticos (404, 409, 422).
+   - `api/app.py`: Middleware de Origin e tratador central de erros HTTP (401, 403, 404, 409, 422).
 10. **Foreign Keys ativas no SQLite**: Hook via SQLAlchemy event listener executando `PRAGMA foreign_keys = ON` em cada conexão.
 11. **Usuários e auditoria**: Usuários têm `id`, `nome`, `login` único, `senha_hash`, `papel`, `ativo` e `criado_em`. Senhas são armazenadas com Argon2, nunca em texto puro. Cada movimentação referencia obrigatoriamente o usuário responsável; o extrato retorna seu nome.
 
@@ -45,16 +46,18 @@ estoque-restaurante/
 ├── api/
 │   ├── __init__.py          # Pacote da API
 │   ├── app.py               # Instância FastAPI, lifespan e exception handler central
-│   ├── dependencias.py      # Injeção de dependência get_db (SessionLocal por request)
+│   ├── dependencias.py      # Injeção de get_db e get_current_user
 │   ├── schemas.py           # Modelos Pydantic de entrada e saída (DTOs)
 │   └── rotas/
 │       ├── __init__.py      # Pacote de rotas
+│       ├── auth.py          # Login, logout e usuário autenticado
 │       ├── itens.py         # Endpoints de /itens (CRUD, alerta e extrato)
 │       ├── movimentacoes.py # Endpoints de /movimentacoes (registro de entrada/saída)
-│       └── usuarios.py      # Endpoints de /usuarios (abertos provisoriamente)
+│       └── usuarios.py      # Endpoints administrativos de /usuarios
 ├── db.py                    # Engine, SessionLocal e ativação de FKs do SQLite
-├── models.py                # Modelos ORM (Item, Usuario, Movimentacao e Enums)
-├── services.py              # Regras de negócio, validações, usuários e consultas de saldo
+├── config.py                # Leitura e validação das variáveis de ambiente
+├── models.py                # Modelos ORM (Item, Usuario, Movimentacao, Sessao e Enums)
+├── services.py              # Regras, validações, autenticação e permissões
 ├── legacy/
 │   └── terminal.py          # CLI arquivada, não mantida nem usada pelo fluxo principal
 ├── scripts/
@@ -64,6 +67,7 @@ estoque-restaurante/
 ├── main.py                  # Ponto de entrada da API
 ├── requirements.txt         # Dependências do projeto
 ├── .gitignore               # Arquivos ignorados pelo Git (banco local, caches, etc.)
+├── .env.example              # Modelo das configurações locais, sem segredos
 └── estoque.db               # Banco de dados local SQLite (gerado na execução)
 ```
 
@@ -76,7 +80,33 @@ estoque-restaurante/
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-### 2. Executar a API Web (FastAPI)
+### 2. Configurar o ambiente local
+
+Copie o exemplo para `.env`:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Gere uma chave aleatória forte:
+
+```powershell
+.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Coloque a chave gerada em `SECRET_KEY` no `.env`. O arquivo `.env` é local e ignorado pelo Git; nunca o adicione ao repositório. A aplicação recusa iniciar se a chave estiver ausente, for o valor de exemplo ou tiver menos de 32 caracteres.
+
+Configuração local esperada:
+
+```dotenv
+SECRET_KEY=<chave aleatoria gerada localmente>
+SESSION_TTL_MINUTES=480
+COOKIE_SECURE=false
+```
+
+`SESSION_TTL_MINUTES` é inteiro positivo; `480` corresponde a oito horas fixas, sem renovação por atividade. `COOKIE_SECURE` aceita somente `true` ou `false`; use `true` em produção com HTTPS.
+
+### 3. Executar a API Web (FastAPI)
 ```powershell
 .venv\Scripts\python.exe main.py
 ```
@@ -98,9 +128,43 @@ Na raiz do projeto, execute pelo ambiente virtual:
 .venv\Scripts\python.exe -m scripts.criar_admin
 ```
 
-O módulo é executado a partir da raiz, permitindo ao Python importar `db.py`, `models.py` e `services.py`. O script cria as tabelas antes do cadastro, oculta a senha e pede confirmação. Ele recusa continuar se já houver um administrador ativo; para cadastrar outros usuários, use `POST /usuarios` em `/docs` (rota aberta provisoriamente até a Etapa 3).
+O módulo é executado a partir da raiz, oculta a senha e pede confirmação. O serviço recusa criar o administrador inicial se já houver um administrador ativo. O script não depende da `SECRET_KEY`. Depois do bootstrap, entre como administrador para cadastrar outros usuários em `/docs`.
 
-> **Atenção: API sem autenticação nesta etapa.** As rotas `/usuarios` estão abertas provisoriamente; ainda não há login nem permissões nas rotas da API. A proteção será implementada na Etapa 3. Use apenas localmente e não exponha a API a redes ou usuários não confiáveis.
+Todas as rotas de estoque exigem login. Operações administrativas de usuários também exigem papel ADMINISTRADOR.
+
+---
+
+## 🔐 Autenticação e Sessões
+
+O login cria uma sessão no banco e envia um cookie `session` assinado. O cookie contém um identificador aleatório; o banco armazena somente o SHA-256 desse identificador. Em cada requisição autenticada, a API valida a assinatura, procura a sessão, confere expiração/revogação e verifica no banco se o usuário ainda está ativo.
+
+O cookie usa `HttpOnly`, `SameSite=Lax`, `Path=/` e expiração fixa configurada por `SESSION_TTL_MINUTES`. Ao desativar um usuário, suas sessões são revogadas. O logout é idempotente e remove o cookie do navegador.
+
+| Método | Rota | Descrição | Status |
+|---|---|---|---|
+| `POST` | `/auth/login` | Valida credenciais e cria sessão | `200` |
+| `POST` | `/auth/logout` | Revoga a sessão atual quando possível e apaga o cookie | `200` |
+| `GET` | `/auth/me` | Retorna o usuário da sessão autenticada | `200` |
+
+No Swagger em `/docs`, execute `POST /auth/login` com login e senha. O navegador guarda o cookie HttpOnly e o envia automaticamente nas chamadas seguintes feitas na mesma origem; não há botão **Authorize** para esse mecanismo. Confirme a sessão com `GET /auth/me`. Para sair, use `POST /auth/logout`; `/auth/me` deve então responder `401`.
+
+No início de cada login, sessões expiradas são removidas; a sessão nova recebe o TTL integral e não é renovada por atividade.
+
+O middleware valida `Origin` em todas as requisições `POST`, `PUT`, `PATCH` e `DELETE`. Origin ausente, `null` ou de outra origem recebe `403`. Clientes que não são navegadores, como `curl` e scripts, precisam enviar `Origin: http://127.0.0.1:8000` no desenvolvimento local.
+
+## 👥 Permissões
+
+| Ação | ADMINISTRADOR | ESTOQUISTA | COZINHA |
+|---|---:|---:|---:|
+| Consultar itens, saldos, extratos e alertas | Sim | Sim | Sim |
+| Registrar ENTRADA / COMPRA | Sim | Sim | Não |
+| Registrar SAIDA / USO | Sim | Sim | Sim |
+| Registrar SAIDA / PERDA ou VENCIMENTO | Sim | Sim | Não |
+| Cadastrar e editar item | Sim | Sim | Não |
+| Desativar e reativar item | Sim | Não | Não |
+| Gerenciar usuários | Sim | Não | Não |
+
+As permissões são verificadas em `services.py`, antes de buscar o recurso ou validar as demais regras de negócio. A resposta de permissão negada é `403` com `{"erro":"PermissaoNegadaError","mensagem":"Voce nao tem permissao para esta acao."}`.
 
 ---
 
@@ -122,13 +186,11 @@ O módulo é executado a partir da raiz, permitindo ao Python importar `db.py`, 
 ### Movimentações (`/movimentacoes`)
 | Método | Rota | Descrição | Status Sucesso |
 |---|---|---|---|
-| `POST` | `/movimentacoes` | Registra entrada ou saída; resposta inclui o nome de quem lançou | `201 Created` |
-
-> **Campo provisório:** o corpo de `POST /movimentacoes` recebe `usuario_id` nesta etapa. Na Etapa 3, esse campo sairá do schema e o ID virá do usuário autenticado.
+| `POST` | `/movimentacoes` | Registra entrada ou saída em nome do usuário autenticado | `201 Created` |
 
 ### Usuários (`/usuarios`)
 
-Estas rotas estão abertas **provisoriamente** até a implementação de login e permissões na Etapa 3.
+Todas estas rotas exigem login e o papel ADMINISTRADOR.
 
 | Método | Rota | Descrição | Status Sucesso |
 |---|---|---|---|
@@ -139,35 +201,7 @@ Estas rotas estão abertas **provisoriamente** até a implementação de login e
 | `PATCH` | `/usuarios/{usuario_id}/desativar` | Desativa usuário | `200 OK` |
 | `PATCH` | `/usuarios/{usuario_id}/reativar` | Reativa usuário | `200 OK` |
 
-### Roteiro de verificação manual da Etapa 2
-
-Faça esta verificação localmente pelo Swagger em `/docs`. As rotas estão sem autenticação nesta etapa. Em todas as respostas de usuário, confirme que `senha_hash` não aparece.
-
-1. **Criar o primeiro administrador:** na raiz do projeto, rode `& "$PWD\.venv\Scripts\python.exe" -m scripts.criar_admin` no PowerShell. Informe nome e login; digite a senha duas vezes nos prompts ocultos. O script cria as tabelas se necessário e informa o ID criado.
-2. **Subir a API:** rode `& "$PWD\.venv\Scripts\python.exe" main.py` e abra `http://127.0.0.1:8000/docs`.
-3. **Criar usuários dos três papéis:** o administrador inicial já cobre `ADMINISTRADOR`. Use `POST /usuarios` para criar um `ESTOQUISTA`, um `COZINHA` e um segundo `ADMINISTRADOR` (necessário para a etapa de teste do último administrador). Cada cadastro válido retorna **201**. Anote os IDs. Os corpos seguem este formato:
-
-    ```json
-    {
-       "nome": "Bruno Estoquista",
-       "login": "estoquista",
-       "senha": "senha-segura-123",
-       "papel": "ESTOQUISTA"
-    }
-    ```
-
-    Para os outros dois, altere `nome`, `login` e `papel` para `COZINHA` e `ADMINISTRADOR`.
-4. **Login duplicado:** repita `POST /usuarios` com login já cadastrado, inclusive variando maiúsculas ou espaços externos. Esperado: **409 Conflict**, `erro: "LoginDuplicadoError"`.
-5. **Senha curta:** envie `POST /usuarios` com uma senha como `"abc"`. Esperado: **422 Unprocessable Entity**, rejeitada pelo schema Pydantic antes de chegar ao serviço.
-6. **Usuário inexistente:** chame `GET /usuarios/999999` (use um ID que não exista). Esperado: **404 Not Found**, `erro: "UsuarioNaoEncontradoError"`.
-7. **Criar item para movimentar:** use `POST /itens` com `{"nome":"Arroz de teste","unidade":"g","estoque_minimo":0}`. Esperado: **201**; anote o `id` retornado.
-8. **Movimentação válida:** use `POST /movimentacoes` com o ID do item, o ID de um usuário ativo e `tipo: "ENTRADA"`, `quantidade: 1000`, `motivo: "COMPRA"`. Esperado: **201** e resposta com `usuario_nome` igual ao nome do responsável.
-9. **Movimentação com usuário inexistente:** repita a entrada com `usuario_id: 999999`. Esperado: **404 Not Found**, `UsuarioNaoEncontradoError`; nenhuma movimentação deve ser gravada.
-10. **Movimentação com usuário inativo:** chame `PATCH /usuarios/{id_cozinha}/desativar` (esperado **200**) e tente registrar uma entrada com esse `usuario_id`. Esperado: **409 Conflict**, `UsuarioInativoError`; nenhuma movimentação deve ser gravada.
-11. **Extrato com responsável:** chame `GET /itens/{id_item}/extrato`. Esperado: **200**; cada movimentação inclui `usuario_nome` e não contém `senha_hash`.
-12. **Último administrador:** há dois administradores ativos: o inicial e o segundo criado no passo 3. Desative o segundo com `PATCH /usuarios/{id_admin_2}/desativar`; esperado: **200**. Depois tente desativar o administrador inicial com `PATCH /usuarios/{id_admin_inicial}/desativar`; esperado: **409 Conflict**, `UltimoAdministradorError`. O primeiro deve continuar ativo.
-
-`usuario_id` no corpo de `POST /movimentacoes` é provisório e fornecido pelo cliente apenas para esta etapa. Na Etapa 3, o campo será removido e o responsável virá da sessão autenticada. O teste de senha curta retorna o formato de validação padrão do FastAPI; erros de domínio usam o formato `{ "erro": "...", "mensagem": "..." }`.
+O roteiro completo de autenticação e permissões está na seção de verificação manual da Etapa 3 abaixo.
 
 ---
 
@@ -177,9 +211,11 @@ As exceções de domínio disparadas pelo `services.py` são interceptadas e con
 
 | Exceção | Status HTTP | Significado |
 |---|---|---|
+| `CredenciaisInvalidasError` | **401 Unauthorized** | Credencial ausente, inválida, expirada ou usuário inativo. |
+| `PermissaoNegadaError` | **403 Forbidden** | Usuário autenticado sem permissão para a ação. |
 | `ItemNaoEncontradoError`<br>`UsuarioNaoEncontradoError` | **404 Not Found** | O item ou usuário informado não existe. |
 | `NomeInvalidoError`<br>`UnidadeInvalidaError`<br>`EstoqueMinimoInvalidoError`<br>`QuantidadeInvalidaError`<br>`SenhaInvalidaError` | **422 Unprocessable Content** | Violação dos requisitos de formato ou dos dados aceitos pelo domínio. |
-| `EstoqueInsuficienteError`<br>`ItemInativoError`<br>`MotivoIncompativelError`<br>`AlteracaoUnidadeProibidaError`<br>`LoginDuplicadoError`<br>`UsuarioInativoError`<br>`UltimoAdministradorError` | **409 Conflict** | Conflito com o estado atual, login duplicado ou proteção do último administrador. |
+| `EstoqueInsuficienteError`<br>`ItemInativoError`<br>`MotivoIncompativelError`<br>`AlteracaoUnidadeProibidaError`<br>`LoginDuplicadoError`<br>`UsuarioInativoError`<br>`UltimoAdministradorError`<br>`AdministradorJaExisteError` | **409 Conflict** | Conflito com o estado atual, login duplicado ou proteção do último administrador. |
 
 **Exemplo de resposta de erro:**
 ```json
@@ -190,3 +226,39 @@ As exceções de domínio disparadas pelo `services.py` são interceptadas e con
 ```
 
 Erros de validação estrutural dos schemas Pydantic também são tratados pelo FastAPI como `422 Unprocessable Entity`. O tratador central mantém a mensagem original da exceção no campo `mensagem` da resposta.
+
+---
+
+## ✅ Roteiro de Verificação Manual da Etapa 3
+
+Execute localmente pelo Swagger em `http://127.0.0.1:8000/docs`. O navegador deve abrir o Swagger pela mesma origem da API para enviar o cookie de sessão automaticamente. Use dados de teste e garanta saldo suficiente antes dos testes de saída.
+
+1. **Preparar ambiente e administrador:** configure `.env` conforme a seção acima; rode `.venv\Scripts\python.exe -m scripts.criar_admin`, informe nome/login e digite a senha duas vezes nos prompts ocultos. Suba a API e abra `/docs`.
+2. **Sem login:** antes de autenticar, chame `GET /itens` e `GET /auth/me`. Esperado: `401` com erro de credenciais. Rotas de escrita chamadas pelo navegador também exigem Origin válido.
+3. **Login válido:** `POST /auth/login` com o administrador. Esperado: `200`, resposta sem `senha_hash` e cookie `session` com HttpOnly, SameSite=Lax e Path=/; `GET /auth/me` retorna `200` sem `senha_hash`.
+4. **Credenciais inválidas:** faça login com senha errada e com login inexistente. Esperado: ambos `401` e a mesma mensagem genérica `Credenciais invalidas.`.
+5. **Criar usuários de teste:** autenticado como administrador, use `POST /usuarios` para criar ESTOQUISTA, COZINHA e um segundo ADMINISTRADOR. Esperado: `201`; nenhuma resposta deve conter `senha_hash`. Anote os IDs.
+6. **Acesso inativo:** como administrador, desative um usuário de teste. Esperado: `200`; o cookie/sessão antigo desse usuário deve falhar imediatamente em `GET /auth/me` com `401`. Reative-o para continuar os testes, e ele deve fazer login novamente.
+7. **Consultas de estoque:** faça login como cada papel e use `GET /itens`, `GET /itens/{id}`, saldo, extrato e alertas. Esperado: `200` para ADMINISTRADOR, ESTOQUISTA e COZINHA.
+8. **Cadastro e edição de item:** como ADMINISTRADOR e ESTOQUISTA, `POST /itens` e `PUT /itens/{id}` devem retornar `201` e `200`. Como COZINHA, ambas devem retornar `403`.
+9. **Desativar/reativar item:** ADMINISTRADOR deve obter `200` em ambos os PATCH. ESTOQUISTA e COZINHA devem obter `403`.
+10. **Ordem autorização/busca de item:** envie um corpo válido para `PUT /itens/999999`. Como COZINHA, esperado `403`; como ESTOQUISTA, esperado `404`.
+11. **Preparar saldo:** como ADMINISTRADOR ou ESTOQUISTA, cadastre um item e registre entrada COMPRA suficiente para os testes seguintes. Esperado `201` em cada operação permitida.
+12. **Movimentações de ADMINISTRADOR e ESTOQUISTA:** cada um deve conseguir registrar ENTRADA/COMPRA, SAIDA/USO, SAIDA/PERDA e SAIDA/VENCIMENTO. Esperado `201` para cada par, desde que haja saldo nas saídas.
+13. **Movimentações de COZINHA:** SAIDA/USO deve retornar `201`. ENTRADA/COMPRA, SAIDA/PERDA e SAIDA/VENCIMENTO devem retornar `403` com a mensagem genérica de permissão.
+14. **Validações de movimentação:** ENTRADA/USO deve retornar `409`; saída acima do saldo deve retornar `409`. Envie `usuario_id` extra no JSON: esperado `422`, pois o schema rejeita campos extras. O extrato do item deve mostrar `usuario_nome` do usuário que está logado, não um ID escolhido pelo cliente.
+15. **Gerenciamento de usuários:** ADMINISTRADOR deve criar, listar, buscar, alterar papel, desativar e reativar usuários com status `2xx` quando a regra permitir. ESTOQUISTA e COZINHA devem receber `403` em todas as rotas de usuários. Login duplicado retorna `409`; senha curta retorna `422`.
+16. **Cookie adulterado:** altere o valor do cookie `session` nas ferramentas de desenvolvedor do navegador e chame `GET /auth/me`. Esperado: `401`.
+17. **Logout:** execute `POST /auth/logout`, depois `GET /auth/me`. Esperado: logout `200`; `/auth/me` `401`. Repetir logout sem cookie também retorna sucesso.
+18. **Sessão expirada:** em um ambiente local de teste, configure `SESSION_TTL_MINUTES=1`, reinicie a API, faça login e aguarde mais de um minuto; `/auth/me` deve retornar `401`. Depois restaure `480` no `.env`.
+19. **Origin:** faça uma chamada mutável sem cabeçalho Origin, por exemplo com `curl.exe`; esperado `403`. Repita incluindo `Origin: http://127.0.0.1:8000`; a requisição deve passar pelo middleware e retornar o status próprio da operação. O Swagger no mesmo host envia Origin pelo navegador.
+20. **Último administrador:** mantenha dois administradores ativos. Desative um deles (`200`) e tente desativar ou rebaixar o último ativo; esperado `409` com `UltimoAdministradorError`. O último deve permanecer ativo.
+
+## Riscos Abertos e Próximos Passos
+
+- **Tentativas de login:** ainda não há limite ou atraso progressivo; considerar proteção contra força bruta numa etapa futura.
+- **HTTPS e rede/tablet:** `COOKIE_SECURE=true` e HTTPS são obrigatórios antes de expor o sistema à rede ou usar tablets fora do host local.
+- **Senha:** troca e redefinição de senha não estão implementadas.
+- **Correções de estoque:** não há tipo AJUSTE; movimentações continuam imutáveis e erros devem ser corrigidos por lançamentos compensatórios aprovados.
+- **Banco:** planejar backup e restauração do SQLite; mudanças de esquema futuras exigirão estratégia de migração.
+- **Frontend/XSS:** ao implementar a interface, não inserir conteúdo do usuário com `innerHTML`; preferir `textContent` e tratar saída conforme o contexto.
