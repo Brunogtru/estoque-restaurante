@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from config import COOKIE_SECURE, SECRET_KEY, SESSION_TTL_MINUTES
 from db import criar_tabelas
 from erros import (
+    AdministradorJaExisteError,
     CredenciaisInvalidasError,
     EstoqueError,
     ItemNaoEncontradoError,
@@ -103,6 +104,7 @@ STATUS_POR_EXCECAO = {
     SenhaInvalidaError: status.HTTP_422_UNPROCESSABLE_CONTENT,
 
     # 409 Conflict: violação de regra de negócio / estado conflitante
+    AdministradorJaExisteError: status.HTTP_409_CONFLICT,
     EstoqueInsuficienteError: status.HTTP_409_CONFLICT,
     ItemInativoError: status.HTTP_409_CONFLICT,
     MotivoIncompativelError: status.HTTP_409_CONFLICT,

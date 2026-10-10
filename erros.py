@@ -95,4 +95,9 @@ class PermissaoNegadaError(EstoqueError):
     pass
 
 
+class AdministradorJaExisteError(EstoqueError):
+    """Ja existe um administrador ativo no sistema."""
+    pass
+
+
 
