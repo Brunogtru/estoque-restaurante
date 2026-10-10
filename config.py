@@ -46,12 +46,12 @@ def _parse_session_ttl(value: str) -> int:
 def _parse_cookie_secure(value: str) -> bool:
     """Valida e converte o valor de COOKIE_SECURE."""
     normalizado = value.strip().lower()
-    if normalizado in {"1", "true", "yes", "on"}:
+    if normalizado == "true":
         return True
-    if normalizado in {"0", "false", "no", "off", ""}:
+    if normalizado == "false":
         return False
     raise ValueError(
-        "COOKIE_SECURE deve ser um booleano. Use true/false, 1/0, yes/no ou on/off."
+        "COOKIE_SECURE deve ser true ou false."
     )
 
 
